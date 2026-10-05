@@ -1,0 +1,1894 @@
+<!DOCTYPE html>
+<html lang="th" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SaveTung - ระบบบันทึกรายรับรายจ่าย (Supabase Online)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#ecfdf5',
+                            100: '#d1fae5',
+                            500: '#10b981',
+                            600: '#059669',
+                            700: '#047857',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Font (Prompt) -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Supabase JS SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: 'Prompt', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .mobile-container {
+            max-width: 480px;
+            margin: 0 auto;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+        @media (min-width: 640px) {
+            body { background-color: #0f172a; }
+            .mobile-frame-wrapper {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                padding: 1rem;
+            }
+            .mobile-container {
+                height: 880px;
+                max-height: 92vh;
+                border-radius: 40px;
+                border: 12px solid #1e293b;
+                overflow: hidden;
+            }
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="h-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100">
+
+    <!-- Auth Mandatory Screen Modal -->
+    <div id="authScreen" class="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4">
+            <div class="text-center space-y-1">
+                <div class="w-14 h-14 bg-emerald-500 rounded-2xl mx-auto flex items-center justify-center text-white shadow-lg shadow-emerald-500/30 mb-2">
+                    <i data-lucide="wallet" class="w-7 h-7"></i>
+                </div>
+                <h2 id="authModalTitle" class="text-lg font-bold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">SaveTung Login</h2>
+                <p id="authSubtitle" class="text-xs text-slate-400">เข้าสู่ระบบด้วย Supabase เพื่อเริ่มใช้งาน</p>
+            </div>
+            
+            <form onsubmit="handleAuthSubmit(event)" class="space-y-3">
+                <div>
+                    <label class="block text-[11px] font-medium mb-1">อีเมล (Email)</label>
+                    <input type="email" id="authEmail" required placeholder="user@example.com" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs focus:ring-2 focus:ring-emerald-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-[11px] font-medium mb-1">รหัสผ่าน (Password)</label>
+                    <input type="password" id="authPassword" required placeholder="••••••••" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs focus:ring-2 focus:ring-emerald-500 outline-none">
+                </div>
+                <button type="submit" id="authSubmitBtn" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-semibold py-2.5 rounded-xl text-xs transition shadow-md shadow-emerald-600/20">เข้าสู่ระบบ</button>
+            </form>
+            
+            <div class="text-center pt-2">
+                <button type="button" onclick="toggleAuthMode()" id="authToggleBtn" class="text-xs text-emerald-600 dark:text-emerald-400 font-medium hover:underline">ยังไม่มีบัญชี? สมัครสมาชิก</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="mobile-frame-wrapper w-full h-full">
+        <div id="app" class="mobile-container w-full h-full bg-slate-50 dark:bg-slate-900 flex flex-col relative overflow-hidden">
+            
+            <header class="bg-white/90 dark:bg-slate-800/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-700/80 px-4 py-3 flex items-center justify-between shrink-0 z-20">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-9 h-9 bg-emerald-500 rounded-2xl flex items-center justify-center text-white shadow-md shadow-emerald-500/30">
+                        <i data-lucide="wallet" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-sm font-bold leading-tight bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">SaveTung</h1>
+                        <p class="text-[10px] text-slate-500 dark:text-slate-400" id="userEmailDisplay">กรุณาเข้าสู่ระบบ</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-1.5">
+                    <span id="syncStatusBadge" class="px-2.5 py-1 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/50 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span>Supabase Online</span>
+                    </span>
+                    <!-- Dark Mode Toggle -->
+                    <button onclick="toggleDarkMode()" class="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
+                        <i id="darkModeIcon" data-lucide="moon" class="w-4 h-4"></i>
+                    </button>
+                    <!-- Logout Button -->
+                    <button onclick="handleLogout()" id="logoutBtn" class="p-2 rounded-xl text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition hidden" title="ออกจากระบบ">
+                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </header>
+
+            <main id="mainContent" class="flex-1 overflow-y-auto p-4 pb-24 no-scrollbar">
+                <!-- Views Rendered Here -->
+            </main>
+
+            <!-- Floating Quick Add Transaction Button -->
+            <div class="absolute bottom-20 right-5 z-30">
+                <button onclick="openTransactionModal()" class="w-14 h-14 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full flex items-center justify-center shadow-xl shadow-emerald-600/40 transform active:scale-95 transition-all" title="บันทึกรายการ">
+                    <i data-lucide="plus" class="w-7 h-7"></i>
+                </button>
+            </div>
+
+            <nav class="absolute bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-700 px-1 py-2 flex justify-around items-center z-20">
+                <button onclick="switchTab('dashboard')" class="nav-btn flex flex-col items-center py-1 px-2 text-emerald-600 dark:text-emerald-400" data-tab="dashboard">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+                    <span class="text-[10px] mt-0.5 font-medium">ภาพรวม</span>
+                </button>
+                <button onclick="switchTab('transactions')" class="nav-btn flex flex-col items-center py-1 px-2 text-slate-400 dark:text-slate-400" data-tab="transactions">
+                    <i data-lucide="receipt" class="w-5 h-5"></i>
+                    <span class="text-[10px] mt-0.5 font-medium">บันทึก</span>
+                </button>
+                <button onclick="switchTab('accounts')" class="nav-btn flex flex-col items-center py-1 px-2 text-slate-400 dark:text-slate-400" data-tab="accounts">
+                    <i data-lucide="credit-card" class="w-5 h-5"></i>
+                    <span class="text-[10px] mt-0.5 font-medium">กระเป๋าเงิน</span>
+                </button>
+                <button onclick="switchTab('categories')" class="nav-btn flex flex-col items-center py-1 px-2 text-slate-400 dark:text-slate-400" data-tab="categories">
+                    <i data-lucide="tags" class="w-5 h-5"></i>
+                    <span class="text-[10px] mt-0.5 font-medium">หมวดหมู่</span>
+                </button>
+                <button onclick="switchTab('budgets_goals')" class="nav-btn flex flex-col items-center py-1 px-2 text-slate-400 dark:text-slate-400" data-tab="budgets_goals">
+                    <i data-lucide="wallet" class="w-5 h-5"></i>
+                    <span class="text-[10px] mt-0.5 font-medium">งบ/เป้าหมาย</span>
+                </button>
+                <button onclick="switchTab('analytics')" class="nav-btn flex flex-col items-center py-1 px-2 text-slate-400 dark:text-slate-400" data-tab="analytics">
+                    <i data-lucide="pie-chart" class="w-5 h-5"></i>
+                    <span class="text-[10px] mt-0.5 font-medium">วิเคราะห์</span>
+                </button>
+            </nav>
+
+        </div>
+    </div>
+
+    <!-- Sub-Account Drilldown Modal -->
+    <div id="subAccountModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-md w-full p-5 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[85vh] overflow-y-auto no-scrollbar">
+            <div class="flex justify-between items-center mb-3">
+                <h3 id="subAccountTitle" class="text-sm font-bold flex items-center gap-2">
+                    <i data-lucide="wallet" class="w-4 h-4 text-emerald-500"></i> รายการกระเป๋าเงิน
+                </h3>
+                <button onclick="closeSubAccountModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div id="subAccountContent" class="space-y-2.5"></div>
+        </div>
+    </div>
+
+    <!-- Account General Ledger Modal -->
+    <div id="ledgerModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[85vh] overflow-y-auto no-scrollbar">
+            <div class="flex justify-between items-center mb-3">
+                <h3 id="ledgerTitle" class="text-sm font-bold flex items-center gap-2">
+                    <i data-lucide="book-open" class="w-4 h-4 text-emerald-500"></i> สมุดบัญชีแยกประเภท (General Ledger)
+                </h3>
+                <button onclick="closeAccountLedger()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div id="ledgerContent" class="space-y-3"></div>
+        </div>
+    </div>
+
+    <!-- Transaction Modal -->
+    <div id="txModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-t-3xl sm:rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[90vh] overflow-y-auto no-scrollbar">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="txModalTitle" class="text-sm font-bold flex items-center gap-2">
+                    <i data-lucide="receipt" class="w-4 h-4 text-emerald-500"></i> บันทึกรายการใหม่
+                </h3>
+                <button onclick="closeTransactionModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <form onsubmit="handleSaveTransaction(event)" class="space-y-3.5">
+                <input type="hidden" id="editTxId">
+                <div>
+                    <label class="block text-[11px] font-medium mb-1">ประเภทรายการ</label>
+                    <select id="txType" onchange="onTxTypeChange()" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                        <option value="expense">รายจ่าย (Expense)</option>
+                        <option value="income">รายรับ (Income)</option>
+                        <option value="transfer">โอนเงิน (Transfer)</option>
+                        <option value="credit_spend">รูดบัตรเครดิต (Credit Spend)</option>
+                        <option value="credit_payment">จ่ายบิลบัตร (Credit Payment)</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-[11px] font-medium mb-1">จำนวนเงิน (บาท)</label>
+                        <input type="number" step="0.01" id="txAmount" required placeholder="0.00" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-medium mb-1">วันและเวลา</label>
+                        <input type="datetime-local" id="txDate" required class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-[10px]">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-medium mb-1" id="txWalletLabel">กระเป๋าเงินต้นทาง</label>
+                    <select id="txWalletId" required class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs"></select>
+                </div>
+                <div id="toWalletContainer" class="hidden">
+                    <label class="block text-[11px] font-medium mb-1" id="txToWalletLabel">บัญชีปลายทาง</label>
+                    <select id="txToWalletId" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs"></select>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-medium mb-1">หมวดหมู่ (Category)</label>
+                    <select id="txCategoryId" required class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs"></select>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-medium mb-1">บันทึกโน้ต / รายละเอียดรายการ</label>
+                    <input type="text" id="txNote" placeholder="เช่น ค่าข้าว, ช้อปปิ้งออนไลน์" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                </div>
+                <!-- Credit Card Installment Section -->
+                <div id="installmentBox" class="p-3 bg-slate-100 dark:bg-slate-900 rounded-2xl space-y-2.5 hidden">
+                    <label class="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                        <input type="checkbox" id="txIsInstallment" onchange="toggleInstallmentFields()" class="rounded text-emerald-600">
+                        เปิดระบบผ่อนชำระ (Installment)
+                    </label>
+                    <div id="installmentFields" class="grid grid-cols-2 gap-2 hidden">
+                        <div>
+                            <label class="block text-[10px] text-slate-500 mb-0.5">งวดปัจจุบัน</label>
+                            <input type="number" id="txCurrentMonth" value="1" min="1" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-white dark:bg-slate-800">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] text-slate-500 mb-0.5">จำนวนงวดทั้งหมด</label>
+                            <input type="number" id="txTotalMonths" value="10" min="2" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-white dark:bg-slate-800">
+                        </div>
+                    </div>
+                </div>
+                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl text-xs transition shadow-md shadow-emerald-600/20">บันทึกรายการ</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Custom Alert Notification -->
+    <div id="customAlert" class="fixed top-5 left-1/2 transform -translate-x-1/2 z-50 transition-all duration-300 -translate-y-20 opacity-0 max-w-xs w-full px-4 pointer-events-none">
+        <div id="alertContent" class="flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border text-xs font-medium">
+            <i id="alertIcon" data-lucide="check-circle" class="w-4 h-4 shrink-0"></i>
+            <span id="alertMessage">ข้อความแจ้งเตือน</span>
+        </div>
+    </div>
+
+    <script>
+        // Supabase Credentials
+        const SUPABASE_URL = "https://hutcroemvwxhhyvutdfj.supabase.co";
+        const SUPABASE_KEY = "sb_publishable_IzlL-c2tws1LY_VfWWflXw_Y7v_IPpj";
+
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let currentUser = null;
+        let isSignUpMode = false;
+        let currentTab = 'dashboard';
+
+        let globalFilter = {
+            mode: 'month',
+            currentDate: new Date(),
+            startDate: '',
+            endDate: ''
+        };
+
+        let db = {
+            accounts: [],
+            categories: [],
+            budgets: [],
+            transactions: [],
+            savings_goals: []
+        };
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            lucide.createIcons();
+            await checkAuthSession();
+        });
+
+        async function checkAuthSession() {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (session && session.user) {
+                currentUser = session.user;
+                updateAuthUI(true);
+                closeAuthScreen();
+                await loadAllData();
+                switchTab('dashboard');
+            } else {
+                currentUser = null;
+                updateAuthUI(false);
+                openAuthScreen();
+            }
+        }
+
+        // --- AUTH FUNCTIONS ---
+        function openAuthScreen() {
+            document.getElementById('authScreen').classList.remove('hidden');
+        }
+
+        function closeAuthScreen() {
+            document.getElementById('authScreen').classList.add('hidden');
+        }
+
+        function toggleAuthMode() {
+            isSignUpMode = !isSignUpMode;
+            document.getElementById('authModalTitle').textContent = isSignUpMode ? 'SaveTung Sign Up' : 'SaveTung Login';
+            document.getElementById('authSubtitle').textContent = isSignUpMode ? 'สมัครสมาชิกใหม่เพื่อเริ่มใช้งาน' : 'เข้าสู่ระบบด้วย Supabase เพื่อเริ่มใช้งาน';
+            document.getElementById('authSubmitBtn').textContent = isSignUpMode ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ';
+            document.getElementById('authToggleBtn').textContent = isSignUpMode ? 'มีบัญชีอยู่แล้ว? เข้าสู่ระบบ' : 'ยังไม่มีบัญชี? สมัครสมาชิก';
+        }
+
+        async function handleAuthSubmit(e) {
+            e.preventDefault();
+            const email = document.getElementById('authEmail').value.trim();
+            const password = document.getElementById('authPassword').value.trim();
+
+            try {
+                if (isSignUpMode) {
+                    const { data, error } = await supabaseClient.auth.signUp({ email, password });
+                    if (error) throw error;
+                    showAlert('สมัครสมาชิกสำเร็จ! กรุณาเข้าสู่ระบบ');
+                    toggleAuthMode();
+                } else {
+                    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+                    if (error) throw error;
+                    currentUser = data.user;
+                    updateAuthUI(true);
+                    closeAuthScreen();
+                    await loadAllData();
+                    switchTab('dashboard');
+                    showAlert('เข้าสู่ระบบสำเร็จ');
+                }
+            } catch (err) {
+                showAlert('Auth Error: ' + err.message, 'error');
+            }
+        }
+
+        async function handleLogout() {
+            await supabaseClient.auth.signOut();
+            currentUser = null;
+            db = { accounts: [], categories: [], budgets: [], transactions: [], savings_goals: [] };
+            updateAuthUI(false);
+            openAuthScreen();
+            showAlert('ออกจากระบบเรียบร้อย');
+        }
+
+        function updateAuthUI(isLoggedIn) {
+            const userEmailDisplay = document.getElementById('userEmailDisplay');
+            const logoutBtn = document.getElementById('logoutBtn');
+
+            if (isLoggedIn && currentUser) {
+                userEmailDisplay.textContent = currentUser.email;
+                logoutBtn.classList.remove('hidden');
+            } else {
+                userEmailDisplay.textContent = 'กรุณาเข้าสู่ระบบ';
+                logoutBtn.classList.add('hidden');
+            }
+        }
+
+        function showAlert(message, type = 'success') {
+            const alertEl = document.getElementById('customAlert');
+            const contentEl = document.getElementById('alertContent');
+            const iconEl = document.getElementById('alertIcon');
+            const msgEl = document.getElementById('alertMessage');
+
+            if (!alertEl || !contentEl) return;
+
+            msgEl.textContent = message;
+            contentEl.className = type === 'success' 
+                ? 'flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200'
+                : 'flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border bg-rose-50 border-rose-200 text-rose-800 dark:bg-rose-950 dark:border-rose-800 dark:text-rose-200';
+            
+            iconEl.setAttribute('data-lucide', type === 'success' ? 'check-circle' : 'alert-circle');
+            lucide.createIcons();
+
+            alertEl.classList.remove('-translate-y-20', 'opacity-0');
+            setTimeout(() => { alertEl.classList.add('-translate-y-20', 'opacity-0'); }, 3500);
+        }
+
+        // ==========================================
+        // DIRECT SUPABASE DATABASE OPERATIONS
+        // ==========================================
+        async function loadAllData() {
+            if (!currentUser) return;
+            try {
+                const [acc, cat, bud, tx, goal] = await Promise.all([
+                    supabaseClient.from('accounts').select('*').order('created_at', { ascending: true }),
+                    supabaseClient.from('categories').select('*').order('created_at', { ascending: true }),
+                    supabaseClient.from('budgets').select('*').order('created_at', { ascending: true }),
+                    supabaseClient.from('transactions').select('*').order('transaction_date', { ascending: false }),
+                    supabaseClient.from('savings_goals').select('*').order('created_at', { ascending: true })
+                ]);
+
+                if (acc.error) showAlert('ไม่สามารถโหลดข้อมูล บัญชี: ' + acc.error.message, 'error');
+                if (cat.error) showAlert('ไม่สามารถโหลดข้อมูล หมวดหมู่: ' + cat.error.message, 'error');
+
+                db.accounts = acc.data || [];
+                db.categories = cat.data || [];
+                db.budgets = bud.data || [];
+                db.transactions = tx.data || [];
+                db.savings_goals = goal.data || [];
+            } catch (e) {
+                console.error("Supabase load exception:", e);
+                showAlert("เกิดข้อผิดพลาดในการเชื่อมต่อ Supabase: " + e.message, 'error');
+            }
+        }
+
+        async function saveToDB(tableName, record) {
+            delete record.id;
+            delete record.user_id;
+
+            const { data, error } = await supabaseClient.from(tableName).insert([record]).select();
+            if (error) { 
+                showAlert('บันทึกเข้า Supabase ไม่สำเร็จ: ' + error.message, 'error'); 
+                console.error("Supabase Insert Error:", error);
+                return null; 
+            }
+            if (data && data[0]) {
+                db[tableName].push(data[0]);
+            }
+            return data ? data[0] : record;
+        }
+
+        async function updateInDB(tableName, id, updatedFields) {
+            delete updatedFields.id;
+            delete updatedFields.user_id;
+
+            const { error } = await supabaseClient.from(tableName).update(updatedFields).eq('id', id);
+            if (error) { 
+                showAlert('อัปเดต Supabase ไม่สำเร็จ: ' + error.message, 'error'); 
+                console.error("Supabase Update Error:", error);
+                return; 
+            }
+            const idx = db[tableName].findIndex(item => item.id === id);
+            if (idx !== -1) {
+                db[tableName][idx] = { ...db[tableName][idx], ...updatedFields };
+            }
+        }
+
+        async function deleteFromDB(tableName, id) {
+            const { error } = await supabaseClient.from(tableName).delete().eq('id', id);
+            if (error) { 
+                showAlert('ลบจาก Supabase ไม่สำเร็จ: ' + error.message, 'error'); 
+                console.error("Supabase Delete Error:", error);
+                return; 
+            }
+            db[tableName] = db[tableName].filter(item => item.id !== id);
+        }
+
+        async function moveItemOrder(tableName, id, direction) {
+            const list = db[tableName];
+            const idx = list.findIndex(item => item.id === id);
+            if (idx === -1) return;
+            const targetIdx = idx + direction;
+            if (targetIdx < 0 || targetIdx >= list.length) return;
+
+            const temp = list[idx].order_index ?? idx;
+            list[idx].order_index = list[targetIdx].order_index ?? targetIdx;
+            list[targetIdx].order_index = temp;
+
+            const item = list.splice(idx, 1)[0];
+            list.splice(targetIdx, 0, item);
+
+            for (const it of list) {
+                await supabaseClient.from(tableName).update({ order_index: it.order_index }).eq('id', it.id);
+            }
+            renderCurrentTab();
+            showAlert('จัดลำดับสำเร็จ');
+        }
+
+        // ==========================================
+        // UI AND RENDER FUNCTIONS
+        // ==========================================
+        function switchTab(tabName) {
+            currentTab = tabName;
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.className = "nav-btn flex flex-col items-center py-1 px-2 text-slate-400 dark:text-slate-400";
+                if(btn.dataset.tab === tabName) {
+                    btn.className = "nav-btn flex flex-col items-center py-1 px-2 text-emerald-600 dark:text-emerald-400";
+                }
+            });
+            renderCurrentTab();
+        }
+
+        function renderCurrentTab() {
+            const main = document.getElementById('mainContent');
+            if (!main) return;
+            main.innerHTML = '';
+            switch(currentTab) {
+                case 'dashboard': renderDashboard(main); break;
+                case 'transactions': renderTransactions(main); break;
+                case 'accounts': renderAccounts(main); break;
+                case 'categories': renderCategories(main); break;
+                case 'budgets_goals': renderBudgetsAndGoals(main); break;
+                case 'analytics': renderAnalytics(main); break;
+            }
+            lucide.createIcons();
+        }
+
+        function toggleDarkMode() {
+            document.documentElement.classList.toggle('dark');
+            const isDark = document.documentElement.classList.contains('dark');
+            const icon = document.getElementById('darkModeIcon');
+            if (icon) icon.setAttribute('data-lucide', isDark ? 'sun' : 'moon');
+            lucide.createIcons();
+        }
+
+        function setGlobalFilterMode(mode) {
+            globalFilter.mode = mode;
+            globalFilter.currentDate = new Date();
+            renderCurrentTab();
+        }
+
+        function shiftDateRange(direction) {
+            const d = new Date(globalFilter.currentDate);
+            if (globalFilter.mode === 'today') {
+                d.setDate(d.getDate() + direction);
+            } else if (globalFilter.mode === 'month') {
+                d.setMonth(d.getMonth() + direction);
+            } else if (globalFilter.mode === 'year') {
+                d.setFullYear(d.getFullYear() + direction);
+            }
+            globalFilter.currentDate = d;
+            renderCurrentTab();
+        }
+
+        function applyCustomDateFilter() {
+            const start = document.getElementById('customStartDate').value;
+            const end = document.getElementById('customEndDate').value;
+            if (!start || !end) { showAlert('กรุณาเลือกช่วงวันที่ให้ครบถ้วน', 'error'); return; }
+            globalFilter.mode = 'custom';
+            globalFilter.startDate = start;
+            globalFilter.endDate = end;
+            renderCurrentTab();
+        }
+
+        function filterTransactionsByDate(txs) {
+            const d = new Date(globalFilter.currentDate);
+            return txs.filter(tx => {
+                if (!tx.transaction_date) return false;
+                const txDate = new Date(tx.transaction_date);
+                if (globalFilter.mode === 'today') {
+                    return txDate.toDateString() === d.toDateString();
+                } else if (globalFilter.mode === 'month') {
+                    return txDate.getFullYear() === d.getFullYear() && txDate.getMonth() === d.getMonth();
+                } else if (globalFilter.mode === 'year') {
+                    return txDate.getFullYear() === d.getFullYear();
+                } else if (globalFilter.mode === 'custom' && globalFilter.startDate && globalFilter.endDate) {
+                    const start = new Date(globalFilter.startDate);
+                    const end = new Date(globalFilter.endDate);
+                    end.setHours(23, 59, 59, 999);
+                    return txDate >= start && txDate <= end;
+                }
+                return true;
+            });
+        }
+
+        function renderDateFilterBar() {
+            let labelStr = '';
+            const d = new Date(globalFilter.currentDate);
+            if (globalFilter.mode === 'today') {
+                labelStr = d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+            } else if (globalFilter.mode === 'month') {
+                labelStr = d.toLocaleDateString('th-TH', { year: 'numeric', month: 'long' });
+            } else if (globalFilter.mode === 'year') {
+                labelStr = 'ปี ' + (d.getFullYear() + 543);
+            } else if (globalFilter.mode === 'custom') {
+                labelStr = globalFilter.startDate + ' ถึง ' + globalFilter.endDate;
+            }
+
+            return `
+                <div class="bg-white dark:bg-slate-800 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                            <i data-lucide="calendar" class="w-3.5 h-3.5 text-emerald-500"></i> ช่วงเวลาแสดงผล
+                        </span>
+                        <div class="flex items-center gap-2">
+                            ${globalFilter.mode !== 'custom' ? `
+                                <button onclick="shiftDateRange(-1)" class="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center hover:bg-emerald-100 text-slate-600 dark:text-slate-300"><i data-lucide="chevron-left" class="w-3.5 h-3.5"></i></button>
+                            ` : ''}
+                            <span class="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold px-1">
+                                ${labelStr}
+                            </span>
+                            ${globalFilter.mode !== 'custom' ? `
+                                <button onclick="shiftDateRange(1)" class="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center hover:bg-emerald-100 text-slate-600 dark:text-slate-300"><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></button>
+                            ` : ''}
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-4 gap-1.5 text-[11px]">
+                        <button onclick="setGlobalFilterMode('today')" class="py-1.5 rounded-xl font-medium transition ${globalFilter.mode === 'today' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}">วันนี้</button>
+                        <button onclick="setGlobalFilterMode('month')" class="py-1.5 rounded-xl font-medium transition ${globalFilter.mode === 'month' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}">เดือนนี้</button>
+                        <button onclick="setGlobalFilterMode('year')" class="py-1.5 rounded-xl font-medium transition ${globalFilter.mode === 'year' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}">ปีนี้</button>
+                        <button onclick="setGlobalFilterMode('custom')" class="py-1.5 rounded-xl font-medium transition ${globalFilter.mode === 'custom' ? 'bg-emerald-600 text-white shadow' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}">กำหนด</button>
+                    </div>
+                    ${globalFilter.mode === 'custom' ? `
+                        <div class="pt-2 border-t border-slate-100 dark:border-slate-700 flex items-center gap-2">
+                            <input type="date" id="customStartDate" value="${globalFilter.startDate}" class="flex-1 px-2 py-1.5 rounded-xl border text-[11px] bg-slate-50 dark:bg-slate-900">
+                            <span class="text-xs text-slate-400">ถึง</span>
+                            <input type="date" id="customEndDate" value="${globalFilter.endDate}" class="flex-1 px-2 py-1.5 rounded-xl border text-[11px] bg-slate-50 dark:bg-slate-900">
+                            <button onclick="applyCustomDateFilter()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold rounded-xl">แสดง</button>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function getPaymentMethodBadge(tx) {
+            const acc = db.accounts.find(a => a.id === tx.wallet_id);
+            const type = acc ? acc.account_type : 'cash';
+            let label = 'เงินสด';
+            let color = 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300';
+            if (type === 'bank') { label = 'เงินโอน (ธนาคาร)'; color = 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'; }
+            else if (type === 'credit') { label = 'บัตรเครดิต'; color = 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300'; }
+            else if (type === 'investment') { label = 'การลงทุน'; color = 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'; }
+            else if (type === 'loan') { label = 'หนี้สิน'; color = 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'; }
+            else if (tx.transaction_type === 'transfer') { label = 'โอนระหว่างบัญชี'; color = 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'; }
+
+            const d = new Date(tx.transaction_date);
+            const dateStr = d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+            const timeStr = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+
+            return `
+                <div class="flex items-center gap-1.5 text-[10px] text-slate-400">
+                    <span class="px-1.5 py-0.5 rounded-full font-medium ${color}">${label} (${acc ? acc.account_name : 'กระเป๋า'})</span>
+                    <span>· ${dateStr} ${timeStr}</span>
+                </div>
+            `;
+        }
+
+        function renderDashboard(container) {
+            const netWorth = db.accounts.reduce((sum, acc) => sum + Number(acc.balance), 0);
+            const totalAssets = db.accounts.filter(a => ['cash', 'bank', 'investment'].includes(a.account_type)).reduce((s, a) => s + Number(a.balance), 0);
+            const totalLiabilities = db.accounts.filter(a => ['credit', 'loan'].includes(a.account_type)).reduce((s, a) => s + Math.abs(Number(a.balance)), 0);
+
+            const filteredTxs = filterTransactionsByDate(db.transactions);
+            const periodIncome = filteredTxs.filter(tx => tx.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+            const periodExpense = filteredTxs.filter(tx => ['expense', 'credit_spend'].includes(tx.transaction_type)).reduce((s, t) => s + Number(t.amount), 0);
+
+            let alertHtml = '';
+            const now = new Date();
+            db.accounts.filter(acc => acc.account_type === 'credit').forEach(card => {
+                const todayDay = now.getDate();
+                if (card.due_date && Math.abs(card.due_date - todayDay) <= 3) {
+                    alertHtml += `
+                        <div class="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl p-3 flex items-center justify-between text-xs">
+                            <div class="flex items-center space-x-2 text-amber-800 dark:text-amber-300">
+                                <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 shrink-0"></i>
+                                <span><b>${card.account_name}</b> ครบกำหนดชำระวันที่ ${card.due_date} (ยอดหนี้ ฿${Math.abs(card.balance).toLocaleString()})</span>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+
+            const groupDefinitions = [
+                { type: 'cash', title: 'เงินสด', icon: 'wallet', color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-950/30' },
+                { type: 'bank', title: 'เงินฝากธนาคาร', icon: 'landmark', color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-950/30' },
+                { type: 'credit', title: 'บัตรเครดิต', icon: 'credit-card', color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-950/30' },
+                { type: 'investment', title: 'การลงทุน', icon: 'trending-up', color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-950/30' },
+                { type: 'loan', title: 'หนี้สิน', icon: 'file-text', color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-950/30' }
+            ];
+
+            container.innerHTML = `
+                <div class="space-y-4 animate-in fade-in duration-200">
+                    ${alertHtml}
+                    ${renderDateFilterBar()}
+
+                    <!-- Net Worth Card -->
+                    <div class="bg-gradient-to-br from-emerald-600 to-teal-700 text-white p-5 rounded-3xl shadow-xl shadow-emerald-600/20 relative overflow-hidden space-y-3">
+                        <div class="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <div class="text-xs font-medium text-emerald-100 mb-0.5">สินทรัพย์สุทธิ (Net Worth)</div>
+                                <div class="text-3xl font-bold tracking-tight">฿${netWorth.toLocaleString()}</div>
+                            </div>
+                            <div class="w-10 h-10 rounded-2xl bg-white/15 flex items-center justify-center">
+                                <i data-lucide="wallet" class="w-5 h-5 text-emerald-200"></i>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 pt-3 border-t border-white/20 text-xs">
+                            <div class="bg-white/10 p-2.5 rounded-2xl">
+                                <span class="text-emerald-200 block text-[10px]">สินทรัพย์รวม (Assets)</span>
+                                <span class="font-bold text-sm text-emerald-100">+฿${totalAssets.toLocaleString()}</span>
+                            </div>
+                            <div class="bg-white/10 p-2.5 rounded-2xl">
+                                <span class="text-emerald-200 block text-[10px]">หนี้สินรวม (Liabilities)</span>
+                                <span class="font-bold text-sm text-rose-200">-฿${totalLiabilities.toLocaleString()}</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 pt-1 text-xs">
+                            <div>
+                                <span class="text-emerald-200 block text-[10px]">รายรับช่วงนี้</span>
+                                <span class="font-bold text-sm">+฿${periodIncome.toLocaleString()}</span>
+                            </div>
+                            <div>
+                                <span class="text-emerald-200 block text-[10px]">รายจ่ายช่วงนี้</span>
+                                <span class="font-bold text-sm">-฿${periodExpense.toLocaleString()}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Compact Overview -->
+                    <div>
+                        <div class="flex justify-between items-center mb-2 px-1">
+                            <h3 class="font-bold text-xs text-slate-500 uppercase tracking-wider">กระเป๋าเงิน (แยกตามประเภท)</h3>
+                            <button onclick="switchTab('accounts')" class="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">จัดการทั้งหมด</button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2.5">
+                            ${groupDefinitions.map(group => {
+                                const matchingAccounts = db.accounts.filter(a => a.account_type === group.type);
+                                if (matchingAccounts.length === 0) return '';
+                                const totalBal = matchingAccounts.reduce((sum, a) => sum + Number(a.balance), 0);
+                                return `
+                                    <div onclick="openSubAccountDrilldown('${group.type}', '${group.title}')" class="bg-white dark:bg-slate-800 p-3.5 rounded-3xl border border-slate-200/80 dark:border-slate-700 flex flex-col justify-between shadow-sm cursor-pointer hover:border-emerald-500 transition">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <div class="w-8 h-8 rounded-2xl ${group.bg} flex items-center justify-center ${group.color}">
+                                                <i data-lucide="${group.icon}" class="w-4 h-4"></i>
+                                            </div>
+                                            <span class="text-[9px] uppercase px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-400">${matchingAccounts.length} บัญชี</span>
+                                        </div>
+                                        <div>
+                                            <div class="text-xs font-bold text-slate-900 dark:text-white truncate">${group.title}</div>
+                                            <div class="text-xs font-bold mt-1 ${totalBal < 0 ? 'text-rose-500' : 'text-slate-900 dark:text-white'}">
+                                                ฿${totalBal.toLocaleString()}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    <!-- Recent Transactions -->
+                    <div>
+                        <div class="flex justify-between items-center mb-2 px-1">
+                            <h3 class="font-bold text-xs text-slate-500 uppercase tracking-wider">รายการในช่วงเวลาที่เลือก</h3>
+                            <button onclick="switchTab('transactions')" class="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">ประวัติทั้งหมด</button>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200/80 dark:border-slate-700 p-2 shadow-sm divide-y divide-slate-100 dark:divide-slate-700/50">
+                            ${filteredTxs.slice(0, 5).map(tx => {
+                                const cat = db.categories.find(c => c.id === tx.category_id) || { category_name: 'ทั่วไป', color: '#10b981', icon: 'tag' };
+                                const isInc = tx.transaction_type === 'income' || tx.transaction_type === 'credit_spend';
+                                return `
+                                    <div class="py-3 px-2 flex items-center justify-between text-xs">
+                                        <div class="flex items-center space-x-2.5">
+                                            <div class="w-8 h-8 rounded-xl flex items-center justify-center text-white shrink-0" style="background-color: ${cat.color}">
+                                                <i data-lucide="${cat.icon || 'tag'}" class="w-4 h-4"></i>
+                                            </div>
+                                            <div class="space-y-0.5">
+                                                <div class="font-semibold text-slate-900 dark:text-white">${tx.transaction_note || cat.category_name}</div>
+                                                ${getPaymentMethodBadge(tx)}
+                                            </div>
+                                        </div>
+                                        <div class="font-bold text-right ${isInc ? 'text-emerald-600' : 'text-slate-900 dark:text-white'}">
+                                            ${isInc ? '+' : '-'}฿${Number(tx.amount).toLocaleString()}
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('') || '<div class="text-center py-6 text-xs text-slate-400">ไม่มีรายการในช่วงเวลานี้</div>'}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function openSubAccountDrilldown(type, title) {
+            const matchingAccounts = db.accounts.filter(a => a.account_type === type);
+            document.getElementById('subAccountTitle').innerHTML = `<i data-lucide="wallet" class="w-4 h-4 text-emerald-500"></i> ${title} (${matchingAccounts.length} บัญชี)`;
+            
+            document.getElementById('subAccountContent').innerHTML = matchingAccounts.map(acc => `
+                <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                    <div>
+                        <div class="font-bold text-xs text-slate-900 dark:text-white">${acc.account_name}</div>
+                        <div class="text-[10px] text-slate-400">คงเหลือ: ฿${Number(acc.balance).toLocaleString()}</div>
+                    </div>
+                    <div class="flex items-center space-x-1.5">
+                        <button onclick="closeSubAccountModal(); openAccountLedger('${acc.id}')" class="px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-[11px] font-semibold">ดูสมุดบัญชี</button>
+                    </div>
+                </div>
+            `).join('') || '<div class="text-center py-4 text-xs text-slate-400">ไม่มีบัญชีในประเภทนี้</div>';
+
+            document.getElementById('subAccountModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeSubAccountModal() { document.getElementById('subAccountModal').classList.add('hidden'); }
+
+        function renderTransactions(container) {
+            const filteredTxs = filterTransactionsByDate(db.transactions);
+            
+            let cashInc = 0, cashExp = 0;
+            let bankInc = 0, bankExp = 0;
+            let creditSpend = 0, creditRefund = 0;
+
+            filteredTxs.forEach(tx => {
+                const acc = db.accounts.find(a => a.id === tx.wallet_id);
+                const type = acc ? acc.account_type : 'cash';
+                const amt = Number(tx.amount);
+
+                if (type === 'cash') {
+                    if (tx.transaction_type === 'income') cashInc += amt;
+                    else if (tx.transaction_type === 'expense') cashExp += amt;
+                } else if (type === 'bank') {
+                    if (tx.transaction_type === 'income') bankInc += amt;
+                    else if (tx.transaction_type === 'expense') bankExp += amt;
+                } else if (type === 'credit') {
+                    if (tx.transaction_type === 'credit_spend') creditSpend += amt;
+                    else if (tx.transaction_type === 'credit_payment') creditRefund += amt;
+                }
+            });
+
+            const netSummary = (cashInc + bankInc + creditRefund) - (cashExp + bankExp + creditSpend);
+
+            container.innerHTML = `
+                <div class="space-y-4 animate-in fade-in duration-200">
+                    ${renderDateFilterBar()}
+
+                    <!-- Financial Summary Card -->
+                    <div class="bg-white dark:bg-slate-800 rounded-3xl p-4 border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-3">
+                        <div class="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-700">
+                            <span class="text-xs font-bold text-slate-700 dark:text-slate-200">สรุปการเงิน ช่วงนี้</span>
+                            <div class="text-right">
+                                <span class="text-[10px] text-slate-400 block">คงเหลือรวมช่วงนี้</span>
+                                <span class="text-sm font-bold ${netSummary < 0 ? 'text-rose-500' : 'text-emerald-600'}">฿${netSummary.toLocaleString()}</span>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-2 text-center text-[11px]">
+                            <div class="p-2.5 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 space-y-1">
+                                <div class="font-bold text-emerald-700 dark:text-emerald-300 flex items-center justify-center gap-1">
+                                    <i data-lucide="wallet" class="w-3 h-3"></i> เงินสด
+                                </div>
+                                <div class="text-left text-[10px] space-y-0.5 pt-1 border-t border-emerald-100 dark:border-emerald-900/30">
+                                    <div class="flex justify-between"><span class="text-slate-400">รับ:</span> <span class="text-emerald-600 font-semibold">฿${cashInc.toLocaleString()}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">จ่าย:</span> <span class="text-rose-500 font-semibold">฿${cashExp.toLocaleString()}</span></div>
+                                </div>
+                            </div>
+
+                            <div class="p-2.5 rounded-2xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 space-y-1">
+                                <div class="font-bold text-blue-700 dark:text-blue-300 flex items-center justify-center gap-1">
+                                    <i data-lucide="landmark" class="w-3 h-3"></i> เงินโอน
+                                </div>
+                                <div class="text-left text-[10px] space-y-0.5 pt-1 border-t border-blue-100 dark:border-blue-900/30">
+                                    <div class="flex justify-between"><span class="text-slate-400">รับ:</span> <span class="text-emerald-600 font-semibold">฿${bankInc.toLocaleString()}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">จ่าย:</span> <span class="text-rose-500 font-semibold">฿${bankExp.toLocaleString()}</span></div>
+                                </div>
+                            </div>
+
+                            <div class="p-2.5 rounded-2xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/50 space-y-1">
+                                <div class="font-bold text-purple-700 dark:text-purple-300 flex items-center justify-center gap-1">
+                                    <i data-lucide="credit-card" class="w-3 h-3"></i> บัตร
+                                </div>
+                                <div class="text-left text-[10px] space-y-0.5 pt-1 border-t border-purple-100 dark:border-purple-900/30">
+                                    <div class="flex justify-between"><span class="text-slate-400">รูดใช้:</span> <span class="text-emerald-600 font-semibold">฿${creditSpend.toLocaleString()}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">จ่ายบิล:</span> <span class="text-rose-500 font-semibold">฿${creditRefund.toLocaleString()}</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-center px-1">
+                        <div>
+                            <h2 class="text-sm font-bold">บันทึกรายการ (Transactions)</h2>
+                            <p class="text-[10px] text-slate-400">เงินสด โอน บัตรเครดิต พร้อมโน้ตและเวลา</p>
+                        </div>
+                        <button onclick="openTransactionModal()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                            <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่ม
+                        </button>
+                    </div>
+
+                    <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200/80 dark:border-slate-700 p-2 shadow-sm divide-y divide-slate-100 dark:divide-slate-700/50">
+                        ${filteredTxs.map(tx => {
+                            const cat = db.categories.find(c => c.id === tx.category_id) || { category_name: 'ทั่วไป', color: '#10b981', icon: 'tag' };
+                            const isInc = tx.transaction_type === 'income' || tx.transaction_type === 'credit_spend';
+                            return `
+                                <div class="py-3 px-2 flex items-center justify-between text-xs">
+                                    <div class="flex items-center space-x-2.5">
+                                        <div class="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0" style="background-color: ${cat.color}">
+                                            <i data-lucide="${cat.icon || 'tag'}" class="w-4 h-4"></i>
+                                        </div>
+                                        <div class="space-y-0.5">
+                                            <div class="font-bold text-slate-900 dark:text-white">${tx.transaction_note || cat.category_name}</div>
+                                            ${getPaymentMethodBadge(tx)}
+                                            ${tx.is_installment ? `<div class="text-[10px] text-amber-500 font-semibold">ผ่อนงวดที่ ${tx.installment_current_month}/${tx.installment_total_months}</div>` : ''}
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <div class="text-right">
+                                            <div class="font-bold ${isInc ? 'text-emerald-600' : 'text-slate-900 dark:text-white'}">
+                                                ${isInc ? '+' : '-'}฿${Number(tx.amount).toLocaleString()}
+                                            </div>
+                                            <div class="text-[9px] uppercase text-slate-400">${tx.transaction_type}</div>
+                                        </div>
+                                        <button onclick="openTransactionModal('${tx.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                        <button onclick="deleteTransaction('${tx.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('') || '<div class="text-center py-10 text-xs text-slate-400">ยังไม่มีประวัติรายการในช่วงเวลานี้</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        function openTransactionModal(id = null) {
+            if (id) {
+                const tx = db.transactions.find(t => t.id === id);
+                if (tx) {
+                    document.getElementById('editTxId').value = tx.id;
+                    document.getElementById('txType').value = tx.transaction_type;
+                    document.getElementById('txAmount').value = tx.amount;
+                    document.getElementById('txDate').value = tx.transaction_date ? tx.transaction_date.slice(0, 16) : new Date().toISOString().slice(0, 16);
+                    document.getElementById('txNote').value = tx.transaction_note || '';
+                    if (tx.is_installment) {
+                        document.getElementById('txIsInstallment').checked = true;
+                        document.getElementById('txCurrentMonth').value = tx.installment_current_month || 1;
+                        document.getElementById('txTotalMonths').value = tx.installment_total_months || 10;
+                        document.getElementById('installmentFields').classList.remove('hidden');
+                    }
+                    document.getElementById('txModalTitle').innerHTML = '<i data-lucide="edit-3" class="w-4 h-4 text-emerald-500"></i> แก้ไขรายการ';
+                    onTxTypeChange();
+                    document.getElementById('txWalletId').value = tx.wallet_id;
+                    document.getElementById('txToWalletId').value = tx.to_wallet_id || '';
+                    document.getElementById('txCategoryId').value = tx.category_id;
+                }
+            } else {
+                document.getElementById('editTxId').value = '';
+                const now = new Date();
+                now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                document.getElementById('txDate').value = now.toISOString().slice(0, 16);
+                document.getElementById('txModalTitle').innerHTML = '<i data-lucide="receipt" class="w-4 h-4 text-emerald-500"></i> บันทึกรายการใหม่';
+                onTxTypeChange();
+            }
+            document.getElementById('txModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeTransactionModal() { document.getElementById('txModal').classList.add('hidden'); }
+
+        function onTxTypeChange() {
+            const type = document.getElementById('txType').value;
+            const walletSelect = document.getElementById('txWalletId');
+            const toWalletSelect = document.getElementById('txToWalletId');
+            const categorySelect = document.getElementById('txCategoryId');
+            const toWalletContainer = document.getElementById('toWalletContainer');
+            const installmentBox = document.getElementById('installmentBox');
+            const txWalletLabel = document.getElementById('txWalletLabel');
+            const txToWalletLabel = document.getElementById('txToWalletLabel');
+
+            if (!walletSelect || !toWalletSelect || !categorySelect) return;
+
+            // บัญชีและประเภทบัตรเครดิตเท่านั้นสำหรับ credit_spend และ credit_payment
+            const creditAccounts = db.accounts.filter(a => a.account_type === 'credit');
+            const nonCreditAccounts = db.accounts.filter(a => a.account_type !== 'credit');
+            const allAccounts = db.accounts;
+
+            if (type === 'credit_spend') {
+                // รูดบัตร -> กระเป๋าหลักต้องเป็นบัตรเครดิตเท่านั้น
+                txWalletLabel.textContent = 'เลือกบัตรเครดิตที่รูด';
+                walletSelect.innerHTML = creditAccounts.map(a => `<option value="${a.id}">[บัตรเครดิต] ${a.account_name}</option>`).join('');
+                toWalletContainer.classList.add('hidden');
+                installmentBox.classList.remove('hidden');
+            } else if (type === 'credit_payment') {
+                // จ่ายบิลบัตร -> กระเป๋าหลักคือบัญชีที่จ่ายเงิน (ธนาคาร/เงินสด), บัญชีปลายทางคือบัตรเครดิต
+                txWalletLabel.textContent = 'จ่ายจากบัญชี (เงินสด/ธนาคาร)';
+                walletSelect.innerHTML = nonCreditAccounts.map(a => `<option value="${a.id}">[${a.account_type.toUpperCase()}] ${a.account_name}</option>`).join('');
+                
+                txToWalletLabel.textContent = 'ชำระเข้าบัตรเครดิตใบไหน';
+                toWalletSelect.innerHTML = creditAccounts.map(a => `<option value="${a.id}">[บัตรเครดิต] ${a.account_name}</option>`).join('');
+                
+                toWalletContainer.classList.remove('hidden');
+                installmentBox.classList.add('hidden');
+            } else if (type === 'transfer') {
+                txWalletLabel.textContent = 'บัญชีต้นทาง';
+                walletSelect.innerHTML = allAccounts.map(a => `<option value="${a.id}">[${a.account_type.toUpperCase()}] ${a.account_name}</option>`).join('');
+                
+                txToWalletLabel.textContent = 'บัญชีปลายทาง';
+                toWalletSelect.innerHTML = allAccounts.map(a => `<option value="${a.id}">[${a.account_type.toUpperCase()}] ${a.account_name}</option>`).join('');
+                
+                toWalletContainer.classList.remove('hidden');
+                installmentBox.classList.add('hidden');
+            } else {
+                // expense / income
+                txWalletLabel.textContent = 'กระเป๋าเงิน / บัญชี';
+                walletSelect.innerHTML = allAccounts.map(a => `<option value="${a.id}">[${a.account_type.toUpperCase()}] ${a.account_name}</option>`).join('');
+                toWalletContainer.classList.add('hidden');
+                installmentBox.classList.add('hidden');
+            }
+
+            categorySelect.innerHTML = db.categories.map(c => `<option value="${c.id}">${c.category_name} (${c.category_type})</option>`).join('');
+        }
+
+        function toggleInstallmentFields() {
+            const checked = document.getElementById('txIsInstallment')?.checked;
+            const fields = document.getElementById('installmentFields');
+            if (!fields) return;
+            if (checked) fields.classList.remove('hidden');
+            else fields.classList.add('hidden');
+        }
+
+        async function handleSaveTransaction(e) {
+            e.preventDefault();
+            const editId = document.getElementById('editTxId').value;
+            const type = document.getElementById('txType').value;
+            const amount = Number(document.getElementById('txAmount').value);
+            const date = document.getElementById('txDate').value;
+            const wallet_id = document.getElementById('txWalletId').value;
+            const to_wallet_id = document.getElementById('txToWalletId').value || null;
+            const category_id = document.getElementById('txCategoryId').value;
+            const note = document.getElementById('txNote').value;
+            
+            const is_installment = document.getElementById('txIsInstallment')?.checked || false;
+            const installment_current_month = is_installment ? Number(document.getElementById('txCurrentMonth').value) : null;
+            const installment_total_months = is_installment ? Number(document.getElementById('txTotalMonths').value) : null;
+
+            const account = db.accounts.find(a => a.id === wallet_id);
+            if (account) {
+                if (type === 'income') {
+                    account.balance = Number(account.balance) + amount;
+                } else if (type === 'expense' || type === 'transfer') {
+                    account.balance = Number(account.balance) - amount;
+                } else if (type === 'credit_spend') {
+                    // รูดบัตรเครดิต ยอดเงินลดลง (หรือยอดหนี้เพิ่มขึ้น)
+                    account.balance = Number(account.balance) - amount;
+                } else if (type === 'credit_payment') {
+                    // จ่ายชำระหนี้บัตร: ตัดเงินบัญชีจ่าย (-) และ คืนวงเงินบัตรเครดิตปลายทาง (+)
+                    account.balance = Number(account.balance) - amount;
+                    const toAcc = db.accounts.find(a => a.id === to_wallet_id);
+                    if (toAcc) {
+                        toAcc.balance = Number(toAcc.balance) + amount;
+                        await updateInDB('accounts', toAcc.id, { balance: toAcc.balance });
+                    }
+                }
+                await updateInDB('accounts', account.id, { balance: account.balance });
+            }
+
+            const txData = {
+                transaction_date: new Date(date).toISOString(),
+                transaction_type: type,
+                amount: amount,
+                wallet_id: wallet_id,
+                to_wallet_id: to_wallet_id,
+                category_id: category_id,
+                transaction_note: note,
+                is_installment: is_installment,
+                installment_total_months: installment_total_months,
+                installment_current_month: installment_current_month
+            };
+
+            if (editId) {
+                await updateInDB('transactions', editId, txData);
+                showAlert('แก้ไขรายการสำเร็จ');
+            } else {
+                await saveToDB('transactions', txData);
+                showAlert('บันทึกรายการสำเร็จ');
+            }
+
+            closeTransactionModal();
+            await loadAllData();
+            renderCurrentTab();
+        }
+
+        async function deleteTransaction(id) {
+            if (confirm('ต้องการลบรายการนี้ใช่หรือไม่?')) {
+                await deleteFromDB('transactions', id);
+                await loadAllData();
+                renderCurrentTab();
+                showAlert('ลบรายการสำเร็จ', 'success');
+            }
+        }
+
+        function renderAccounts(container) {
+            const groupDefinitions = [
+                { type: 'cash', title: 'เงินสด', icon: 'wallet', color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-950/30' },
+                { type: 'bank', title: 'เงินฝากธนาคาร', icon: 'landmark', color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-950/30' },
+                { type: 'credit', title: 'บัตรเครดิต', icon: 'credit-card', color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-950/30' },
+                { type: 'investment', title: 'การลงทุน', icon: 'trending-up', color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-950/30' },
+                { type: 'loan', title: 'หนี้สิน', icon: 'file-text', color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-950/30' }
+            ];
+
+            const totalAssets = db.accounts.filter(a => ['cash', 'bank', 'investment'].includes(a.account_type)).reduce((s, a) => s + Number(a.balance), 0);
+            const totalLiabilities = db.accounts.filter(a => ['credit', 'loan'].includes(a.account_type)).reduce((s, a) => s + Math.abs(Number(a.balance)), 0);
+
+            container.innerHTML = `
+                <div class="space-y-4 animate-in fade-in duration-200">
+                    <div class="flex justify-between items-center px-1">
+                        <div>
+                            <h2 class="text-sm font-bold">กระเป๋าเงิน & บัตรเครดิต (Accounts)</h2>
+                            <p class="text-[10px] text-slate-400">แสดงรวมตามประเภท คลิกเพื่อดูรายการย่อย</p>
+                        </div>
+                        <button onclick="openAccountModal()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                            <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มบัญชี
+                        </button>
+                    </div>
+
+                    <!-- Assets & Liabilities Summary Card -->
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm grid grid-cols-2 gap-3 text-center">
+                        <div class="p-3 bg-emerald-50/50 dark:bg-emerald-950/30 rounded-2xl border border-emerald-100 dark:border-emerald-900/50">
+                            <span class="text-[10px] text-emerald-600 font-bold block mb-0.5 flex items-center justify-center gap-1">
+                                <i data-lucide="trending-up" class="w-3 h-3"></i> สินทรัพย์รวม
+                            </span>
+                            <span class="text-sm font-bold text-emerald-700 dark:text-emerald-300">฿${totalAssets.toLocaleString()}</span>
+                        </div>
+                        <div class="p-3 bg-rose-50/50 dark:bg-rose-950/30 rounded-2xl border border-rose-100 dark:border-rose-900/50">
+                            <span class="text-[10px] text-rose-600 font-bold block mb-0.5 flex items-center justify-center gap-1">
+                                <i data-lucide="trending-down" class="w-3 h-3"></i> หนี้สินรวม
+                            </span>
+                            <span class="text-sm font-bold text-rose-700 dark:text-rose-300">฿${totalLiabilities.toLocaleString()}</span>
+                        </div>
+                    </div>
+
+                    <!-- Compact 2-Column Account Type Cards -->
+                    <div class="grid grid-cols-2 gap-2.5">
+                        ${groupDefinitions.map((group) => {
+                            const matchingAccs = db.accounts.filter(a => a.account_type === group.type);
+                            if (matchingAccs.length === 0) return '';
+                            const totalBal = matchingAccs.reduce((sum, a) => sum + Number(a.balance), 0);
+
+                            return `
+                                <div onclick="openSubAccountDrilldown('${group.type}', '${group.title}')" class="bg-white dark:bg-slate-800 p-3.5 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm flex flex-col justify-between cursor-pointer hover:border-emerald-500 transition relative">
+                                    <div>
+                                        <div class="flex justify-between items-start mb-2">
+                                            <div class="w-8 h-8 rounded-2xl ${group.bg} flex items-center justify-center ${group.color}">
+                                                <i data-lucide="${group.icon}" class="w-4 h-4"></i>
+                                            </div>
+                                            <span class="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500">${matchingAccs.length} บัญชี</span>
+                                        </div>
+                                        <h4 class="font-bold text-xs text-slate-900 dark:text-white truncate">${group.title}</h4>
+                                    </div>
+                                    <div class="pt-2 mt-2 border-t border-slate-100 dark:border-slate-700/50">
+                                        <div class="text-[9px] text-slate-400">ยอดรวมประเภทนี้</div>
+                                        <div class="text-sm font-bold ${totalBal < 0 ? 'text-rose-500' : 'text-slate-900 dark:text-white'}">฿${totalBal.toLocaleString()}</div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+
+                    <!-- Sub-Accounts List -->
+                    <div class="pt-2">
+                        <div class="flex justify-between items-center mb-2 px-1">
+                            <h3 class="font-bold text-xs text-slate-500 uppercase tracking-wider">บัญชีย่อยทั้งหมด</h3>
+                        </div>
+                        <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200/80 dark:border-slate-700 p-2 shadow-sm divide-y divide-slate-100 dark:divide-slate-700/50">
+                            ${db.accounts.map((acc, index) => `
+                                <div class="py-3 px-2 flex items-center justify-between text-xs">
+                                    <div class="flex items-center space-x-2.5">
+                                        <div class="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-slate-700 flex items-center justify-center text-emerald-600">
+                                            <i data-lucide="wallet" class="w-4 h-4"></i>
+                                        </div>
+                                        <div>
+                                            <div class="font-bold text-slate-900 dark:text-white">${acc.account_name}</div>
+                                            <span class="text-[9px] uppercase px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-400">${acc.account_type}</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <div class="text-right">
+                                            <div class="font-bold ${Number(acc.balance) < 0 ? 'text-rose-500' : 'text-slate-900 dark:text-white'}">฿${Number(acc.balance).toLocaleString()}</div>
+                                        </div>
+                                        <div class="flex items-center space-x-0.5">
+                                            ${index > 0 ? `<button onclick="moveItemOrder('accounts', '${acc.id}', -1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-up" class="w-3.5 h-3.5"></i></button>` : ''}
+                                            ${index < db.accounts.length - 1 ? `<button onclick="moveItemOrder('accounts', '${acc.id}', 1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-down" class="w-3.5 h-3.5"></i></button>` : ''}
+                                            <button onclick="openAccountLedger('${acc.id}')" class="text-slate-400 hover:text-emerald-500 p-1" title="สมุดบัญชี"><i data-lucide="book-open" class="w-3.5 h-3.5"></i></button>
+                                            <button onclick="openAccountModal('${acc.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                            <button onclick="deleteAccount('${acc.id}')" class="text-slate-400 hover:text-rose-500 p-1" title="ลบบัญชี"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('') || '<div class="text-center py-6 text-xs text-slate-400">ยังไม่มีบัญชีที่สร้างไว้</div>'}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Add/Edit Account Modal -->
+                <div id="accModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+                    <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-xs w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 id="accModalTitle" class="text-sm font-bold flex items-center gap-2">
+                                <i data-lucide="credit-card" class="w-4 h-4 text-emerald-500"></i> เพิ่มบัญชี / กระเป๋าเงิน
+                            </h3>
+                            <button onclick="closeAccountModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+                        </div>
+                        <form onsubmit="handleSaveAccount(event)" class="space-y-3">
+                            <input type="hidden" id="editAccId">
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ชื่อบัญชี / ชื่อบัตร</label>
+                                <input type="text" id="accName" required placeholder="เช่น กระเป๋าเงิน, ธนาคาร, KTC" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ประเภทบัญชี (Account Type)</label>
+                                <select id="accType" onchange="onAccountTypeChange()" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                                    <option value="cash">เงินสด (Cash)</option>
+                                    <option value="bank">บัญชีธนาคาร (Bank)</option>
+                                    <option value="credit">บัตรเครดิต (Credit)</option>
+                                    <option value="investment">การลงทุน (Investment)</option>
+                                    <option value="loan">หนี้สิน (Loan)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ยอดเงิน / ยอดหนี้เริ่มต้น</label>
+                                <input type="number" step="0.01" id="accBalance" required value="0" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                            </div>
+                            <div id="creditFields" class="space-y-2.5 hidden p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border">
+                                <div>
+                                    <label class="block text-[10px] font-medium mb-1">วงเงินบัตรเครดิตทั้งหมด</label>
+                                    <input type="number" id="accCreditLimit" value="50000" class="w-full px-2 py-1.5 rounded-xl border text-xs">
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label class="block text-[10px] font-medium mb-1">วันสรุปยอด (Statement)</label>
+                                        <input type="number" id="accStatementDate" value="25" min="1" max="31" class="w-full px-2 py-1.5 rounded-xl border text-xs">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-medium mb-1">วันครบกำหนดจ่าย (Due)</label>
+                                        <input type="number" id="accDueDate" value="10" min="1" max="31" class="w-full px-2 py-1.5 rounded-xl border text-xs">
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl text-xs transition shadow-md">บันทึก</button>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
+        function openAccountModal(id = null) {
+            if (id) {
+                const acc = db.accounts.find(a => a.id === id);
+                if (acc) {
+                    document.getElementById('editAccId').value = acc.id;
+                    document.getElementById('accName').value = acc.account_name;
+                    document.getElementById('accType').value = acc.account_type;
+                    document.getElementById('accBalance').value = acc.balance;
+                    document.getElementById('accCreditLimit').value = acc.credit_limit || 50000;
+                    document.getElementById('accStatementDate').value = acc.statement_date || 25;
+                    document.getElementById('accDueDate').value = acc.due_date || 10;
+                    document.getElementById('accModalTitle').innerHTML = '<i data-lucide="edit-3" class="w-4 h-4 text-emerald-500"></i> แก้ไขบัญชี';
+                }
+            } else {
+                document.getElementById('editAccId').value = '';
+                document.getElementById('accName').value = '';
+                document.getElementById('accBalance').value = '0';
+                document.getElementById('accModalTitle').innerHTML = '<i data-lucide="credit-card" class="w-4 h-4 text-emerald-500"></i> เพิ่มบัญชี / กระเป๋าเงิน';
+            }
+            onAccountTypeChange();
+            document.getElementById('accModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeAccountModal() { document.getElementById('accModal').classList.add('hidden'); }
+
+        function onAccountTypeChange() {
+            const type = document.getElementById('accType').value;
+            const creditFields = document.getElementById('creditFields');
+            if (type === 'credit') creditFields.classList.remove('hidden');
+            else creditFields.classList.add('hidden');
+        }
+
+        async function handleSaveAccount(e) {
+            e.preventDefault();
+            const editId = document.getElementById('editAccId').value;
+            const type = document.getElementById('accType').value;
+            const accData = {
+                account_name: document.getElementById('accName').value,
+                account_type: type,
+                balance: Number(document.getElementById('accBalance').value),
+                credit_limit: type === 'credit' ? Number(document.getElementById('accCreditLimit').value) : 0,
+                statement_date: type === 'credit' ? Number(document.getElementById('accStatementDate').value) : null,
+                due_date: type === 'credit' ? Number(document.getElementById('accDueDate').value) : null
+            };
+
+            if (editId) {
+                await updateInDB('accounts', editId, accData);
+                showAlert('แก้ไขบัญชีสำเร็จ');
+            } else {
+                await saveToDB('accounts', accData);
+                showAlert('เพิ่มบัญชีสำเร็จ');
+            }
+            closeAccountModal();
+            await loadAllData();
+            renderCurrentTab();
+        }
+
+        async function deleteAccount(id) {
+            if (confirm('ต้องการลบบัญชีนี้ใช่หรือไม่?')) {
+                await deleteFromDB('accounts', id);
+                await loadAllData();
+                renderCurrentTab();
+                showAlert('ลบบัญชีสำเร็จ', 'success');
+            }
+        }
+
+        // --- Corrected General Ledger Calculations & Display ---
+        function openAccountLedger(accountId) {
+            const acc = db.accounts.find(a => a.id === accountId);
+            if (!acc) return;
+
+            // 1. ดึงรายการธุรกรรมของบัญชีนี้ และเรียงจาก "เก่าไปใหม่" (Chronological Order)
+            const accTxs = db.transactions.filter(t => t.wallet_id === accountId || t.to_wallet_id === accountId);
+            accTxs.sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
+
+            // 2. คำนวณหาสุทธิการเปลี่ยนแปลงทั้งหมดเพื่อถอยกลับไปยังจุดเริ่มต้น
+            let totalNetChange = 0;
+            accTxs.forEach(t => {
+                const amount = Number(t.amount);
+                // เพิ่ม (DEBIT): income และ credit_spend (หรือ บัญชีปลายทางจากการโอน/จ่ายบิล)
+                const isDebit = (t.transaction_type === 'income') || 
+                                (t.transaction_type === 'credit_spend' && t.wallet_id === accountId) || 
+                                (t.to_wallet_id === accountId);
+
+                if (isDebit) {
+                    totalNetChange += amount;
+                } else {
+                    totalNetChange -= amount;
+                }
+            });
+
+            // คำนวณยอดคงเหลือเริ่มต้น
+            const initialStartBalance = Number(acc.balance) - totalNetChange;
+
+            // 3. วนลูปคำนวณ Running Balance
+            let runningBalance = initialStartBalance;
+            let rowsHtml = '';
+
+            if (accTxs.length === 0) {
+                rowsHtml = `<tr><td colspan="5" class="text-center py-6 text-slate-400 text-xs">ยังไม่มีรายการเคลื่อนไหวในบัญชีนี้</td></tr>`;
+            } else {
+                rowsHtml = accTxs.map(t => {
+                    const amount = Number(t.amount);
+                    // เงื่อนไข DEBIT (เพิ่ม): income และ credit_spend
+                    // เงื่อนไข CREDIT (ลด): expense และ credit_payment
+                    const isDebit = (t.transaction_type === 'income') || 
+                                    (t.transaction_type === 'credit_spend' && t.wallet_id === accountId) || 
+                                    (t.to_wallet_id === accountId);
+
+                    if (isDebit) {
+                        runningBalance += amount;
+                    } else {
+                        runningBalance -= amount;
+                    }
+
+                    const d = new Date(t.transaction_date);
+                    const dateStr = d.toLocaleDateString('th-TH', { year: '2-digit', month: 'short', day: 'numeric' });
+                    const timeStr = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+
+                    return `
+                        <tr class="border-b border-slate-100 dark:border-slate-700/50 text-[11px]">
+                            <td class="py-2.5 px-2 text-slate-400">${dateStr} <span class="text-[9px] block">${timeStr}</span></td>
+                            <td class="py-2.5 px-2 font-medium">
+                                <div>${t.transaction_note || '-'}</div>
+                                <div class="text-[9px] text-slate-400 uppercase">ประเภท: ${t.transaction_type}</div>
+                            </td>
+                            <td class="py-2.5 px-2 text-right text-emerald-600 font-semibold">${isDebit ? '+฿' + amount.toLocaleString() : '-'}</td>
+                            <td class="py-2.5 px-2 text-right text-rose-500 font-semibold">${!isDebit ? '-฿' + amount.toLocaleString() : '-'}</td>
+                            <td class="py-2.5 px-2 text-right font-bold text-slate-700 dark:text-slate-200">฿${runningBalance.toLocaleString()}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            document.getElementById('ledgerTitle').innerHTML = `<i data-lucide="book-open" class="w-4 h-4 text-emerald-500"></i> สมุดบัญชี: ${acc.account_name}`;
+            document.getElementById('ledgerContent').innerHTML = `
+                <div class="bg-emerald-50 dark:bg-emerald-950/40 p-3 rounded-2xl flex justify-between items-center text-xs mb-3 border border-emerald-100 dark:border-emerald-900/40">
+                    <span class="text-slate-600 dark:text-slate-300 font-medium">ยอดคงเหลือปัจจุบัน (Ending Balance)</span>
+                    <span class="font-bold text-base text-emerald-600">฿${Number(acc.balance).toLocaleString()}</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-200 dark:border-slate-700 text-[10px] text-slate-400 uppercase">
+                                <th class="py-2 px-2">วัน-เวลา</th>
+                                <th class="py-2 px-2">รายการ / โน้ต</th>
+                                <th class="py-2 px-2 text-right">เพิ่ม (DEBIT)</th>
+                                <th class="py-2 px-2 text-right">ลด (CREDIT)</th>
+                                <th class="py-2 px-2 text-right">คงเหลือ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHtml}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            document.getElementById('ledgerModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeAccountLedger() { document.getElementById('ledgerModal').classList.add('hidden'); }
+
+        function renderCategories(container) {
+            container.innerHTML = `
+                <div class="space-y-4 animate-in fade-in duration-200">
+                    <div class="flex justify-between items-center px-1">
+                        <div>
+                            <h2 class="text-sm font-bold">หมวดหมู่ (Categories)</h2>
+                            <p class="text-[10px] text-slate-400">จัดลำดับ เพิ่ม แก้ไข และลบหมวดหมู่การใช้จ่าย</p>
+                        </div>
+                        <button onclick="openCategoryModal()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                            <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มหมวดหมู่
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-2.5">
+                        ${db.categories.map((cat, index) => `
+                            <div class="bg-white dark:bg-slate-800 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-700 flex justify-between items-center shadow-sm">
+                                <div class="flex items-center space-x-3">
+                                    <div class="w-9 h-9 rounded-xl flex items-center justify-center text-white" style="background-color: ${cat.color || '#10b981'}">
+                                        <i data-lucide="${cat.icon || 'tag'}" class="w-4 h-4"></i>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-xs text-slate-900 dark:text-white">${cat.category_name}</div>
+                                        <span class="text-[9px] uppercase px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500">ประเภท: ${cat.category_type}</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center space-x-1">
+                                    ${index > 0 ? `<button onclick="moveItemOrder('categories', '${cat.id}', -1)" class="text-slate-400 hover:text-emerald-500 p-1" title="เลื่อนขึ้น"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>` : ''}
+                                    ${index < db.categories.length - 1 ? `<button onclick="moveItemOrder('categories', '${cat.id}', 1)" class="text-slate-400 hover:text-emerald-500 p-1" title="เลื่อนลง"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>` : ''}
+                                    <button onclick="openCategoryModal('${cat.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                    <button onclick="deleteCategory('${cat.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                </div>
+                            </div>
+                        `).join('') || '<div class="text-center py-6 text-xs text-slate-400">ยังไม่มีหมวดหมู่ที่สร้างไว้</div>'}
+                    </div>
+                </div>
+
+                <!-- Add/Edit Category Modal -->
+                <div id="catModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+                    <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-xs w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 id="catModalTitle" class="text-sm font-bold flex items-center gap-2">
+                                <i data-lucide="tags" class="w-4 h-4 text-emerald-500"></i> เพิ่มหมวดหมู่ใหม่
+                            </h3>
+                            <button onclick="closeCategoryModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+                        </div>
+                        <form onsubmit="handleSaveCategory(event)" class="space-y-3">
+                            <input type="hidden" id="editCatId">
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ชื่อหมวดหมู่</label>
+                                <input type="text" id="catName" required placeholder="เช่น ค่าน้ำ, ค่าไฟ, ท่องเที่ยว" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ประเภทหมวดหมู่ (Category Type)</label>
+                                <select id="catType" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                                    <option value="expense">รายจ่าย (Expense)</option>
+                                    <option value="income">รายรับ (Income)</option>
+                                    <option value="transfer">โอนเงิน / หนี้สิน (Transfer)</option>
+                                </select>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-[11px] font-medium mb-1">ไอคอน (Lucide Icon)</label>
+                                    <input type="text" id="catIcon" value="tag" placeholder="utensils, car, coffee" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-medium mb-1">สีประจำ (Color)</label>
+                                    <input type="color" id="catColor" value="#10b981" class="w-full h-9 p-1 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 cursor-pointer">
+                                </div>
+                            </div>
+                            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl text-xs transition shadow-md">บันทึกหมวดหมู่</button>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
+        function openCategoryModal(id = null) {
+            if (id) {
+                const cat = db.categories.find(c => c.id === id);
+                if (cat) {
+                    document.getElementById('editCatId').value = cat.id;
+                    document.getElementById('catName').value = cat.category_name;
+                    document.getElementById('catType').value = cat.category_type;
+                    document.getElementById('catIcon').value = cat.icon || 'tag';
+                    document.getElementById('catColor').value = cat.color || '#10b981';
+                    document.getElementById('catModalTitle').innerHTML = '<i data-lucide="edit-3" class="w-4 h-4 text-emerald-500"></i> แก้ไขหมวดหมู่';
+                }
+            } else {
+                document.getElementById('editCatId').value = '';
+                document.getElementById('catName').value = '';
+                document.getElementById('catModalTitle').innerHTML = '<i data-lucide="tags" class="w-4 h-4 text-emerald-500"></i> เพิ่มหมวดหมู่ใหม่';
+            }
+            document.getElementById('catModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeCategoryModal() { document.getElementById('catModal').classList.add('hidden'); }
+
+        async function handleSaveCategory(e) {
+            e.preventDefault();
+            const editId = document.getElementById('editCatId').value;
+            const catData = {
+                category_name: document.getElementById('catName').value,
+                category_type: document.getElementById('catType').value,
+                icon: document.getElementById('catIcon').value || 'tag',
+                color: document.getElementById('catColor').value || '#10b981'
+            };
+
+            if (editId) {
+                await updateInDB('categories', editId, catData);
+                showAlert('แก้ไขหมวดหมู่สำเร็จ');
+            } else {
+                await saveToDB('categories', catData);
+                showAlert('เพิ่มหมวดหมู่สำเร็จ');
+            }
+            closeCategoryModal();
+            await loadAllData();
+            renderCurrentTab();
+        }
+
+        async function deleteCategory(id) {
+            if (confirm('ต้องการลบหมวดหมู่นี้ใช่หรือไม่?')) {
+                await deleteFromDB('categories', id);
+                await loadAllData();
+                renderCurrentTab();
+                showAlert('ลบหมวดหมู่สำเร็จ', 'success');
+            }
+        }
+
+        function renderBudgetsAndGoals(container) {
+            container.innerHTML = `
+                <div class="space-y-5 animate-in fade-in duration-200">
+                    <div>
+                        <div class="flex justify-between items-center mb-2 px-1">
+                            <div>
+                                <h2 class="text-sm font-bold">งบประมาณรายจ่าย (Budgets)</h2>
+                                <p class="text-[10px] text-slate-400">จัดลำดับและกำหนดช่วงเวลา start_period - end_period</p>
+                            </div>
+                            <button onclick="openBudgetModal()" class="bg-emerald-600 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มงบ
+                            </button>
+                        </div>
+                        <div class="space-y-2.5">
+                            ${db.budgets.map((bud, index) => {
+                                const cat = db.categories.find(c => c.id === bud.category_id) || { category_name: 'ทั่วไป' };
+                                const spent = db.transactions
+                                    .filter(tx => tx.category_id === bud.category_id && ['expense', 'credit_spend'].includes(tx.transaction_type))
+                                    .reduce((s, t) => s + Number(t.amount), 0);
+                                const percent = Math.min(100, Math.round((spent / bud.budget_limit) * 100));
+                                return `
+                                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-2">
+                                        <div class="flex justify-between items-start">
+                                            <div>
+                                                <span class="text-[9px] uppercase font-bold text-emerald-600">${bud.start_period} ถึง ${bud.end_period}</span>
+                                                <h4 class="font-bold text-xs text-slate-900 dark:text-white mt-0.5">${bud.budget_name} (${cat.category_name})</h4>
+                                            </div>
+                                            <div class="flex items-center space-x-1">
+                                                ${index > 0 ? `<button onclick="moveItemOrder('budgets', '${bud.id}', -1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>` : ''}
+                                                ${index < db.budgets.length - 1 ? `<button onclick="moveItemOrder('budgets', '${bud.id}', 1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>` : ''}
+                                                <button onclick="openBudgetModal('${bud.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                                <button onclick="deleteBudget('${bud.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div class="flex justify-between text-[10px] mb-1 text-slate-400">
+                                                <span>ใช้ไป: ฿${spent.toLocaleString()}</span>
+                                                <span class="font-bold text-slate-700 dark:text-slate-200">งบ: ฿${Number(bud.budget_limit).toLocaleString()} (${percent}%)</span>
+                                            </div>
+                                            <div class="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                                                <div class="bg-emerald-500 h-full rounded-full" style="width: ${percent}%"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('') || '<div class="text-center py-6 text-xs text-slate-400 bg-white dark:bg-slate-800 rounded-2xl">ยังไม่มีงบประมาณ</div>'}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between items-center mb-2 px-1">
+                            <div>
+                                <h2 class="text-sm font-bold">เป้าหมายเงินออม (Savings Goals)</h2>
+                                <p class="text-[10px] text-slate-400">จัดลำดับเป้าหมายการออมและคำนวณยอดต่อเดือน</p>
+                            </div>
+                            <button onclick="openGoalModal()" class="bg-emerald-600 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มเป้าหมาย
+                            </button>
+                        </div>
+                        <div class="space-y-2.5">
+                            ${db.savings_goals.map((goal, index) => {
+                                const percent = Math.min(100, Math.round((goal.current_amount / goal.target_amount) * 100));
+                                return `
+                                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-2">
+                                        <div class="flex justify-between items-start">
+                                            <div>
+                                                <h4 class="font-bold text-xs text-slate-900 dark:text-white">${goal.goal_title}</h4>
+                                                <div class="text-[10px] text-slate-400">ออมเดือนละ ฿${Number(goal.monthly_target).toLocaleString()} (${goal.saved_periods}/${goal.total_periods} งวด)</div>
+                                            </div>
+                                            <div class="flex items-center space-x-1">
+                                                ${index > 0 ? `<button onclick="moveItemOrder('savings_goals', '${goal.id}', -1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>` : ''}
+                                                ${index < db.savings_goals.length - 1 ? `<button onclick="moveItemOrder('savings_goals', '${goal.id}', 1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>` : ''}
+                                                <button onclick="openGoalModal('${goal.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                                <button onclick="deleteGoal('${goal.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div class="flex justify-between text-[10px] mb-1 text-slate-400">
+                                                <span>เก็บแล้ว: ฿${Number(goal.current_amount).toLocaleString()}</span>
+                                                <span class="font-bold text-slate-700 dark:text-slate-200">เป้าหมาย: ฿${Number(goal.target_amount).toLocaleString()} (${percent}%)</span>
+                                            </div>
+                                            <div class="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                                                <div class="bg-emerald-500 h-full rounded-full" style="width: ${percent}%"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('') || '<div class="text-center py-6 text-xs text-slate-400 bg-white dark:bg-slate-800 rounded-2xl">ยังไม่มีเป้าหมายเงินออม</div>'}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Budget Modal -->
+                <div id="budModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+                    <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-xs w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 id="budModalTitle" class="text-sm font-bold flex items-center gap-2"><i data-lucide="wallet" class="w-4 h-4 text-emerald-500"></i> ตั้งงบประมาณรายจ่าย</h3>
+                            <button onclick="closeBudgetModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+                        </div>
+                        <form onsubmit="handleSaveBudget(event)" class="space-y-3">
+                            <input type="hidden" id="editBudId">
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ชื่อรอบงบประมาณ</label>
+                                <input type="text" id="budName" required placeholder="เช่น งบอาหาร ครึ่งปีแรก" class="w-full px-3 py-2 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">หมวดหมู่รายจ่าย</label>
+                                <select id="budCategoryId" class="w-full px-3 py-2 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                                    ${db.categories.filter(c => c.category_type === 'expense').map(c => `<option value="${c.id}">${c.category_name}</option>`).join('')}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">วงเงินสูงสุด (บาท)</label>
+                                <input type="number" step="0.01" id="budLimit" required placeholder="5000" class="w-full px-3 py-2 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-[10px] font-medium mb-1">เริ่มต้น (Start Period)</label>
+                                    <input type="text" id="budStart" required value="2026-01" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-medium mb-1">สิ้นสุด (End Period)</label>
+                                    <input type="text" id="budEnd" required value="2026-06" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                                </div>
+                            </div>
+                            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl text-xs transition shadow-md">บันทึกงบ</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Savings Goal Modal -->
+                <div id="goalModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+                    <div class="bg-white dark:bg-slate-800 rounded-3xl max-w-xs w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 id="goalModalTitle" class="text-sm font-bold flex items-center gap-2"><i data-lucide="target" class="w-4 h-4 text-emerald-500"></i> เพิ่มเป้าหมายเงินออม</h3>
+                            <button onclick="closeGoalModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+                        </div>
+                        <form onsubmit="handleSaveGoal(event)" class="space-y-3">
+                            <input type="hidden" id="editGoalId">
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ชื่อเป้าหมาย</label>
+                                <input type="text" id="goalTitle" required placeholder="เช่น เก็บเงินเรียน" class="w-full px-3 py-2 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ยอดเป้าหมายรวม (บาท)</label>
+                                <input type="number" step="0.01" id="goalTarget" required placeholder="120000" class="w-full px-3 py-2 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium mb-1">ยอดเก็บสะสมปัจจุบัน (บาท)</label>
+                                <input type="number" step="0.01" id="goalCurrent" required value="0" class="w-full px-3 py-2 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-[10px] font-medium mb-1">จำนวนงวดทั้งหมด</label>
+                                    <input type="number" id="goalPeriods" required value="12" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-medium mb-1">ยอดออมต่อเดือน</label>
+                                    <input type="number" step="0.01" id="goalMonthly" required value="10000" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                                </div>
+                            </div>
+                            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl text-xs transition shadow-md">บันทึกเป้าหมาย</button>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
+        function openBudgetModal(id = null) {
+            if (id) {
+                const bud = db.budgets.find(b => b.id === id);
+                if (bud) {
+                    document.getElementById('editBudId').value = bud.id;
+                    document.getElementById('budName').value = bud.budget_name;
+                    document.getElementById('budCategoryId').value = bud.category_id;
+                    document.getElementById('budLimit').value = bud.budget_limit;
+                    document.getElementById('budStart').value = bud.start_period;
+                    document.getElementById('budEnd').value = bud.end_period;
+                    document.getElementById('budModalTitle').innerHTML = '<i data-lucide="edit-3" class="w-4 h-4 text-emerald-500"></i> แก้ไขงบประมาณ';
+                }
+            } else {
+                document.getElementById('editBudId').value = '';
+                document.getElementById('budName').value = '';
+                document.getElementById('budModalTitle').innerHTML = '<i data-lucide="wallet" class="w-4 h-4 text-emerald-500"></i> ตั้งงบประมาณรายจ่าย';
+            }
+            document.getElementById('budModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeBudgetModal() { document.getElementById('budModal').classList.add('hidden'); }
+
+        function openGoalModal(id = null) {
+            if (id) {
+                const goal = db.savings_goals.find(g => g.id === id);
+                if (goal) {
+                    document.getElementById('editGoalId').value = goal.id;
+                    document.getElementById('goalTitle').value = goal.goal_title;
+                    document.getElementById('goalTarget').value = goal.target_amount;
+                    document.getElementById('goalCurrent').value = goal.current_amount;
+                    document.getElementById('goalPeriods').value = goal.total_periods;
+                    document.getElementById('goalMonthly').value = goal.monthly_target;
+                    document.getElementById('goalModalTitle').innerHTML = '<i data-lucide="edit-3" class="w-4 h-4 text-emerald-500"></i> แก้ไขเป้าหมาย';
+                }
+            } else {
+                document.getElementById('editGoalId').value = '';
+                document.getElementById('goalTitle').value = '';
+                document.getElementById('goalModalTitle').innerHTML = '<i data-lucide="target" class="w-4 h-4 text-emerald-500"></i> เพิ่มเป้าหมายเงินออม';
+            }
+            document.getElementById('goalModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+        function closeGoalModal() { document.getElementById('goalModal').classList.add('hidden'); }
+
+        async function handleSaveBudget(e) {
+            e.preventDefault();
+            const editId = document.getElementById('editBudId').value;
+            const budData = {
+                budget_name: document.getElementById('budName').value,
+                category_id: document.getElementById('budCategoryId').value,
+                budget_limit: Number(document.getElementById('budLimit').value),
+                start_period: document.getElementById('budStart').value,
+                end_period: document.getElementById('budEnd').value
+            };
+            if (editId) {
+                await updateInDB('budgets', editId, budData);
+                showAlert('แก้ไขงบประมาณสำเร็จ');
+            } else {
+                await saveToDB('budgets', budData);
+                showAlert('สร้างงบประมาณสำเร็จ');
+            }
+            closeBudgetModal();
+            await loadAllData();
+            renderCurrentTab();
+        }
+
+        async function handleSaveGoal(e) {
+            e.preventDefault();
+            const editId = document.getElementById('editGoalId').value;
+            const goalData = {
+                goal_title: document.getElementById('goalTitle').value,
+                target_amount: Number(document.getElementById('goalTarget').value),
+                current_amount: Number(document.getElementById('goalCurrent').value),
+                total_periods: Number(document.getElementById('goalPeriods').value),
+                saved_periods: 0,
+                monthly_target: Number(document.getElementById('goalMonthly').value)
+            };
+            if (editId) {
+                await updateInDB('savings_goals', editId, goalData);
+                showAlert('แก้ไขเป้าหมายสำเร็จ');
+            } else {
+                await saveToDB('savings_goals', goalData);
+                showAlert('สร้างเป้าหมายสำเร็จ');
+            }
+            closeGoalModal();
+            await loadAllData();
+            renderCurrentTab();
+        }
+
+        async function deleteBudget(id) {
+            if (confirm('ต้องการลบงบประมาณนี้ใช่หรือไม่?')) {
+                await deleteFromDB('budgets', id);
+                await loadAllData();
+                renderCurrentTab();
+                showAlert('ลบงบประมาณสำเร็จ', 'success');
+            }
+        }
+        async function deleteGoal(id) {
+            if (confirm('ต้องการลบเป้าหมายนี้ใช่หรือไม่?')) {
+                await deleteFromDB('savings_goals', id);
+                await loadAllData();
+                renderCurrentTab();
+                showAlert('ลบเป้าหมายสำเร็จ', 'success');
+            }
+        }
+
+        function renderAnalytics(container) {
+            const filteredTxs = filterTransactionsByDate(db.transactions);
+            const totalAssets = db.accounts.filter(a => ['cash', 'bank', 'investment'].includes(a.account_type)).reduce((s, a) => s + Number(a.balance), 0);
+            const totalLiabilities = db.accounts.filter(a => ['credit', 'loan'].includes(a.account_type)).reduce((s, a) => s + Math.abs(Number(a.balance)), 0);
+
+            container.innerHTML = `
+                <div class="space-y-4 animate-in fade-in duration-200">
+                    ${renderDateFilterBar()}
+
+                    <div class="px-1">
+                        <h2 class="text-sm font-bold">วิเคราะห์ข้อมูล (Analytics)</h2>
+                        <p class="text-[10px] text-slate-400">สัดส่วนสินทรัพย์ หนี้สิน และรายจ่ายตามหมวดหมู่</p>
+                    </div>
+
+                    <!-- Assets & Liabilities Breakdown Summary -->
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-3">
+                        <h3 class="font-bold text-xs text-slate-700 dark:text-slate-200">โครงสร้างสินทรัพย์ & หนี้สิน</h3>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50">
+                                <span class="text-[10px] text-emerald-600 font-bold block mb-1">สินทรัพย์รวม (Assets)</span>
+                                <span class="text-base font-bold text-emerald-700 dark:text-emerald-300">฿${totalAssets.toLocaleString()}</span>
+                            </div>
+                            <div class="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/50">
+                                <span class="text-[10px] text-rose-600 font-bold block mb-1">หนี้สินรวม (Liabilities)</span>
+                                <span class="text-base font-bold text-rose-700 dark:text-rose-300">฿${totalLiabilities.toLocaleString()}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm">
+                        <h3 class="font-bold text-xs mb-3 text-slate-700 dark:text-slate-200">สัดส่วนรายจ่ายตามหมวดหมู่</h3>
+                        <div class="h-56 flex items-center justify-center">
+                            <canvas id="expenseChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm">
+                        <h3 class="font-bold text-xs mb-3 text-slate-700 dark:text-slate-200">ยอดเงินคงเหลือแต่ละบัญชี</h3>
+                        <div class="h-56 flex items-center justify-center">
+                            <canvas id="accountChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            setTimeout(() => {
+                const expenseCategories = db.categories.filter(c => c.category_type === 'expense');
+                const expLabels = expenseCategories.map(c => c.category_name);
+                const expData = expenseCategories.map(c => {
+                    return filteredTxs
+                        .filter(tx => tx.category_id === c.id && ['expense', 'credit_spend'].includes(tx.transaction_type))
+                        .reduce((s, t) => s + Number(t.amount), 0);
+                });
+
+                const ctx1 = document.getElementById('expenseChart').getContext('2d');
+                new Chart(ctx1, {
+                    type: 'doughnut',
+                    data: {
+                        labels: expLabels.length ? expLabels : ['ยังไม่มีรายจ่าย'],
+                        datasets: [{
+                            data: expData.some(v => v > 0) ? expData : [1],
+                            backgroundColor: ['#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6', '#64748b']
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } } }
+                });
+
+                const accLabels = db.accounts.map(a => a.account_name);
+                const accData = db.accounts.map(a => Number(a.balance));
+                const ctx2 = document.getElementById('accountChart').getContext('2d');
+                new Chart(ctx2, {
+                    type: 'bar',
+                    data: {
+                        labels: accLabels,
+                        datasets: [{
+                            label: 'ยอดเงิน (บาท)',
+                            data: accData,
+                            backgroundColor: '#10b981',
+                            borderRadius: 8
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+                });
+            }, 100);
+        }
+    </script>
+</body>
+</html>
