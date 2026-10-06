@@ -40,20 +40,30 @@
             box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
         }
         @media (min-width: 640px) {
-            body { background-color: #0f172a; }
+            body { background-color: #eef1f5; }
             .mobile-frame-wrapper {
                 display: flex;
-                align-items: center;
+                align-items: stretch;
                 justify-content: center;
                 min-height: 100vh;
-                padding: 1rem;
+                padding: 0;
             }
             .mobile-container {
-                height: 880px;
-                max-height: 92vh;
-                border-radius: 40px;
-                border: 12px solid #1e293b;
+                width: 100%;
+                max-width: 1440px;
+                height: 100vh;
+                max-height: none;
+                border-radius: 0;
+                border: 0;
                 overflow: hidden;
+            }
+            #mainContent {
+                padding: 1.5rem 2rem 6rem;
+            }
+            #mainContent > div {
+                width: 100%;
+                max-width: 1100px;
+                margin-inline: auto;
             }
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -479,7 +489,11 @@
                     balance: ['credit', 'loan'].includes(account.account_type)
                         ? -Math.abs(Number(account.balance) || 0)
                         : Number(account.balance) || 0
-                }));
+                })).sort((a, b) => {
+                    const aOrder = a.order_index != null && Number.isFinite(Number(a.order_index)) ? Number(a.order_index) : Number.MAX_SAFE_INTEGER;
+                    const bOrder = b.order_index != null && Number.isFinite(Number(b.order_index)) ? Number(b.order_index) : Number.MAX_SAFE_INTEGER;
+                    return aOrder - bOrder || new Date(a.created_at || 0) - new Date(b.created_at || 0);
+                });
                 db.categories = cat.data || [];
                 db.budgets = bud.data || [];
                 db.transactions = tx.data || [];
@@ -574,22 +588,42 @@
         }
 
         async function moveItemOrder(tableName, id, direction) {
-            const list = db[tableName];
-            const idx = list.findIndex(item => item.id === id);
-            if (idx === -1) return;
+            if (!currentUser || !Array.isArray(db[tableName])) return;
+            const allItems = db[tableName];
+            const item = allItems.find(entry => String(entry.id) === String(id));
+            if (!item) return;
+
+            const list = tableName === 'accounts'
+                ? allItems.filter(entry => entry.account_type === item.account_type)
+                : allItems;
+            const idx = list.findIndex(entry => String(entry.id) === String(id));
             const targetIdx = idx + direction;
             if (targetIdx < 0 || targetIdx >= list.length) return;
 
-            const temp = list[idx].order_index ?? idx;
-            list[idx].order_index = list[targetIdx].order_index ?? targetIdx;
-            list[targetIdx].order_index = temp;
+            [list[idx], list[targetIdx]] = [list[targetIdx], list[idx]];
+            list.forEach((entry, index) => { entry.order_index = index; });
 
-            const item = list.splice(idx, 1)[0];
-            list.splice(targetIdx, 0, item);
+            if (tableName === 'accounts') {
+                const groupIds = new Set(list.map(entry => String(entry.id)));
+                const reordered = list.slice();
+                let nextIndex = 0;
+                for (let index = 0; index < allItems.length; index++) {
+                    if (groupIds.has(String(allItems[index].id))) allItems[index] = reordered[nextIndex++];
+                }
+            } else {
+                allItems.splice(0, allItems.length, ...list);
+            }
 
-            for (const it of list) {
-                await supabaseClient.from(tableName).update({ order_index: it.order_index })
-                    .eq('id', it.id).eq('user_id', currentUser.id);
+            const results = await Promise.all(list.map(entry =>
+                supabaseClient.from(tableName).update({ order_index: entry.order_index })
+                    .eq('id', entry.id).eq('user_id', currentUser.id)
+            ));
+            const failed = results.find(result => result.error);
+            if (failed) {
+                showAlert('บันทึกลำดับไม่สำเร็จ: ' + failed.error.message, 'error');
+                await loadAllData();
+                renderCurrentTab();
+                return;
             }
             renderCurrentTab();
             showAlert('จัดลำดับสำเร็จ');
@@ -950,11 +984,11 @@
                                         ${summary.items.map(item => `
                                             <div class="flex justify-between gap-2 py-0.5 text-[10px] text-slate-600 dark:text-slate-300">
                                                 <span class="min-w-0 truncate">${escapeHtml(item.note)}${item.installment ? ` · งวด ${item.installment}` : ''}</span>
-                                                <span class="shrink-0 font-medium">฿${item.amount.toLocaleString('th-TH', { maximumFractionDigits: 2 })}</span>
+                                                <span class="shrink-0 font-medium">${item.amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                             </div>
                                         `).join('') || '<div class="text-[10px] text-slate-400">ไม่มีรายการที่ต้องชำระในรอบนี้</div>'}
-                                        ${summary.paymentsMade > 0 ? `<div class="mt-1 text-[10px] text-slate-500 dark:text-slate-400">ชำระแล้ว ฿${summary.paymentsMade.toLocaleString('th-TH', { maximumFractionDigits: 2 })}</div>` : ''}
-                                        <div class="mt-2 flex justify-between border-t border-amber-100 pt-2 text-xs font-bold text-amber-800 dark:border-amber-800/60 dark:text-amber-200"><span>ยอดที่ต้องจ่ายรอบนี้</span><span>฿${summary.amountToPrepare.toLocaleString('th-TH', { maximumFractionDigits: 2 })}</span></div>
+                                        ${summary.paymentsMade > 0 ? `<div class="mt-1 text-[10px] text-slate-500 dark:text-slate-400">ชำระแล้ว ${summary.paymentsMade.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>` : ''}
+                                        <div class="mt-2 flex justify-between border-t border-amber-100 pt-2 text-xs font-bold text-amber-800 dark:border-amber-800/60 dark:text-amber-200"><span>ยอดที่ต้องจ่ายรอบนี้</span><span>${summary.amountToPrepare.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                                     </div>
                                 </div>
                             `;
@@ -981,7 +1015,7 @@
                         <div class="flex justify-between items-center">
                             <div>
                                 <div class="text-xs font-medium text-emerald-100 mb-0.5">สินทรัพย์สุทธิ (Net Worth)</div>
-                                <div class="text-3xl font-bold tracking-tight">฿${netWorth.toLocaleString()}</div>
+                                <div class="text-3xl font-bold tracking-tight">${netWorth.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                             </div>
                             <div class="w-10 h-10 rounded-2xl bg-white/15 flex items-center justify-center">
                                 <i data-lucide="wallet" class="w-5 h-5 text-emerald-200"></i>
@@ -990,21 +1024,21 @@
                         <div class="grid grid-cols-2 gap-2 pt-3 border-t border-white/20 text-xs">
                             <div class="bg-white/10 p-2.5 rounded-2xl">
                                 <span class="text-emerald-200 block text-[10px]">สินทรัพย์รวม (Assets)</span>
-                                <span class="font-bold text-sm text-emerald-100">+฿${totalAssets.toLocaleString()}</span>
+                                <span class="font-bold text-sm text-emerald-100">+${totalAssets.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div class="bg-white/10 p-2.5 rounded-2xl">
                                 <span class="text-emerald-200 block text-[10px]">หนี้สินรวม (Liabilities)</span>
-                                <span class="font-bold text-sm text-rose-200">-฿${totalLiabilities.toLocaleString()}</span>
+                                <span class="font-bold text-sm text-rose-200">-${totalLiabilities.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                         </div>
                         <div class="grid grid-cols-2 gap-2 pt-1 text-xs">
                             <div>
                                 <span class="text-emerald-200 block text-[10px]">รายรับช่วงนี้</span>
-                                <span class="font-bold text-sm">+฿${periodIncome.toLocaleString()}</span>
+                                <span class="font-bold text-sm">+${periodIncome.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div>
                                 <span class="text-emerald-200 block text-[10px]">รายจ่ายช่วงนี้</span>
-                                <span class="font-bold text-sm">-฿${periodExpense.toLocaleString()}</span>
+                                <span class="font-bold text-sm">-${periodExpense.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                         </div>
                     </div>
@@ -1034,7 +1068,7 @@
                                         <div>
                                             <div class="text-xs font-bold text-slate-900 dark:text-white truncate">${group.title}</div>
                                             <div class="text-xs font-bold mt-1 ${displayedTotal < 0 ? 'text-rose-500' : 'text-slate-900 dark:text-white'}">
-                                                ฿${displayedTotal.toLocaleString()}
+                                                ${displayedTotal.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </div>
                                         </div>
                                     </div>
@@ -1065,7 +1099,7 @@
                                             </div>
                                         </div>
                                         <div class="font-bold text-right ${isInc ? 'text-emerald-600' : 'text-slate-900 dark:text-white'}">
-                                            ${isInc ? '+' : '-'}฿${Number(tx.amount).toLocaleString()}
+                                            ${isInc ? '+' : '-'}${Number(tx.amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </div>
                                     </div>
                                 `;
@@ -1087,7 +1121,7 @@
                     <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center gap-2 min-w-0">
                         <div class="min-w-0 flex-1">
                             <div class="font-bold text-xs text-slate-900 dark:text-white whitespace-normal break-words">${escapeHtml(acc.account_name)}</div>
-                            <div class="text-[10px] text-slate-400">${['credit', 'loan'].includes(acc.account_type) ? 'ยอดหนี้' : 'คงเหลือ'}: ฿${(['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : Number(acc.balance)).toLocaleString()}</div>
+                            <div class="text-[10px] text-slate-400">${['credit', 'loan'].includes(acc.account_type) ? 'ยอดหนี้' : 'คงเหลือ'}: ${(['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : Number(acc.balance)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                             ${note.trim() ? `<p class="mt-1.5 rounded-lg bg-white dark:bg-slate-800 px-2 py-1.5 text-[10px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-words">${escapeHtml(note)}</p>` : ''}
                         </div>
                         <button onclick="closeSubAccountModal(); openAccountLedger('${acc.id}')" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white" title="ดูสมุดบัญชี" aria-label="ดูสมุดบัญชี"><i data-lucide="book-open" class="h-4 w-4"></i></button>
@@ -1145,7 +1179,7 @@
                             <span class="text-xs font-bold text-slate-700 dark:text-slate-200">สรุปการเงิน ช่วงนี้</span>
                             <div class="text-right">
                                 <span class="text-[10px] text-slate-400 block">คงเหลือรวมช่วงนี้</span>
-                                <span class="text-sm font-bold ${netSummary < 0 ? 'text-rose-500' : 'text-emerald-600'}">฿${netSummary.toLocaleString()}</span>
+                                <span class="text-sm font-bold ${netSummary < 0 ? 'text-rose-500' : 'text-emerald-600'}">${netSummary.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                         </div>
 
@@ -1155,8 +1189,8 @@
                                     <i data-lucide="wallet" class="w-3 h-3"></i> เงินสด
                                 </div>
                                 <div class="text-left text-[10px] space-y-0.5 pt-1 border-t border-emerald-100 dark:border-emerald-900/30">
-                                    <div class="flex justify-between"><span class="text-slate-400">รับ:</span> <span class="text-emerald-600 font-semibold">฿${cashInc.toLocaleString()}</span></div>
-                                    <div class="flex justify-between"><span class="text-slate-400">จ่าย:</span> <span class="text-rose-500 font-semibold">฿${cashExp.toLocaleString()}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">รับ:</span> <span class="text-emerald-600 font-semibold">${cashInc.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">จ่าย:</span> <span class="text-rose-500 font-semibold">${cashExp.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                                 </div>
                             </div>
 
@@ -1165,8 +1199,8 @@
                                     <i data-lucide="landmark" class="w-3 h-3"></i> เงินโอน
                                 </div>
                                 <div class="text-left text-[10px] space-y-0.5 pt-1 border-t border-blue-100 dark:border-blue-900/30">
-                                    <div class="flex justify-between"><span class="text-slate-400">รับ:</span> <span class="text-emerald-600 font-semibold">฿${bankInc.toLocaleString()}</span></div>
-                                    <div class="flex justify-between"><span class="text-slate-400">จ่าย:</span> <span class="text-rose-500 font-semibold">฿${bankExp.toLocaleString()}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">รับ:</span> <span class="text-emerald-600 font-semibold">${bankInc.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">จ่าย:</span> <span class="text-rose-500 font-semibold">${bankExp.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                                 </div>
                             </div>
 
@@ -1175,14 +1209,14 @@
                                     <i data-lucide="credit-card" class="w-3 h-3"></i> บัตร
                                 </div>
                                 <div class="text-left text-[10px] space-y-0.5 pt-1 border-t border-purple-100 dark:border-purple-900/30">
-                                    <div class="flex justify-between"><span class="text-slate-400">รูดใช้:</span> <span class="text-emerald-600 font-semibold">฿${creditSpend.toLocaleString()}</span></div>
-                                    <div class="flex justify-between"><span class="text-slate-400">ชำระบิล:</span> <span class="text-rose-500 font-semibold">฿${creditPayment.toLocaleString()}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">รูดใช้:</span> <span class="text-emerald-600 font-semibold">${creditSpend.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                                    <div class="flex justify-between"><span class="text-slate-400">ชำระบิล:</span> <span class="text-rose-500 font-semibold">${creditPayment.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
                                 </div>
                             </div>
                         </div>
                         <div class="flex justify-between items-center border-t border-slate-100 dark:border-slate-700 pt-2 text-[10px]">
                             <span class="text-slate-500">โอนเงิน (ไม่นับเป็นรายรับ/รายจ่าย)</span>
-                            <span class="font-semibold text-amber-600">ออก ฿${transferOut.toLocaleString()} · เข้า ฿${transferIn.toLocaleString()}</span>
+                            <span class="font-semibold text-amber-600">ออก ${transferOut.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · เข้า ${transferIn.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     </div>
 
@@ -1205,7 +1239,7 @@
                                     <div class="flex items-center space-x-2">
                                         <div class="text-right">
                                             <div class="font-bold ${isInc ? 'text-emerald-600' : 'text-slate-900 dark:text-white'}">
-                                                ${isInc ? '+' : '-'}฿${Number(tx.amount).toLocaleString()}
+                                                ${isInc ? '+' : '-'}${Number(tx.amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </div>
                                             <div class="text-[9px] text-slate-400">${({ income: 'รายรับ', expense: 'รายจ่าย', transfer: 'โอนเงิน', credit_spend: 'รูดบัตรเครดิต', credit_payment: 'ชำระบัตรเครดิต' })[tx.transaction_type] || tx.transaction_type}</div>
                                         </div>
@@ -1468,10 +1502,10 @@
                         <div class="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-blue-400/20 blur-2xl"></div>
                         <div class="relative">
                             <div class="text-xs font-medium text-slate-300">สินทรัพย์สุทธิ</div>
-                            <div class="mt-1 text-3xl font-bold">฿${(totalAssets - totalLiabilities).toLocaleString('th-TH', { maximumFractionDigits: 2 })}</div>
+                            <div class="mt-1 text-3xl font-bold">${(totalAssets - totalLiabilities).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                             <div class="mt-4 grid grid-cols-2 gap-3 border-t border-white/15 pt-3 text-xs">
-                                <div><div class="text-[10px] text-emerald-200">สินทรัพย์รวม</div><div class="mt-0.5 font-bold text-emerald-300">฿${totalAssets.toLocaleString('th-TH', { maximumFractionDigits: 2 })}</div></div>
-                                <div class="text-right"><div class="text-[10px] text-rose-200">หนี้สินรวม</div><div class="mt-0.5 font-bold text-rose-300">฿${totalLiabilities.toLocaleString('th-TH', { maximumFractionDigits: 2 })}</div></div>
+                                <div><div class="text-[10px] text-emerald-200">สินทรัพย์รวม</div><div class="mt-0.5 font-bold text-emerald-300">${totalAssets.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
+                                <div class="text-right"><div class="text-[10px] text-rose-200">หนี้สินรวม</div><div class="mt-0.5 font-bold text-rose-300">${totalLiabilities.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
                             </div>
                         </div>
                     </div>
@@ -1489,29 +1523,29 @@
                                     <button type="button" onclick="toggleAccountGroup('${group.type}')" aria-expanded="${isExpanded}" class="flex w-full items-center gap-3 p-4 text-left">
                                         <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${group.bg} ${group.color}"><i data-lucide="${group.icon}" class="h-5 w-5"></i></span>
                                         <span class="min-w-0 flex-1"><span class="block truncate text-sm font-bold text-slate-800 dark:text-white">${group.title}</span><span class="mt-1 block text-[10px] text-slate-400">${matchingAccs.length} บัญชี</span></span>
-                                        <span class="shrink-0 text-sm font-bold ${group.type === 'credit' || group.type === 'loan' ? 'text-rose-500' : 'text-slate-800 dark:text-white'}">฿${displayedTotal.toLocaleString('th-TH', { maximumFractionDigits: 2 })}</span>
+                                        <span class="shrink-0 text-sm font-bold ${group.type === 'credit' || group.type === 'loan' ? 'text-rose-500' : 'text-slate-800 dark:text-white'}">${displayedTotal.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         <i data-lucide="chevron-${isExpanded ? 'up' : 'down'}" class="h-4 w-4 shrink-0 text-slate-400"></i>
                                     </button>
                                     ${isExpanded ? `
                                         <div class="divide-y divide-slate-100 border-t border-slate-100 px-4 dark:divide-slate-700 dark:border-slate-700">
-                                            ${matchingAccs.map(acc => {
-                                                const index = db.accounts.indexOf(acc);
+                                            ${matchingAccs.map((acc, index) => {
                                                 const balance = ['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : Number(acc.balance);
                                                 const note = getSummaryNote(acc.id).trim();
                                                 return `
-                                                    <div class="flex items-center gap-2 py-3">
-                                                        <span class="min-w-0 flex-1"><span class="block truncate text-xs font-semibold text-slate-800 dark:text-white">${escapeHtml(acc.account_name)}</span><span class="text-[9px] uppercase text-slate-400">${acc.account_type}</span>${note ? `<span class="mt-1.5 block whitespace-pre-wrap break-words rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs leading-relaxed text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">โน้ต: ${escapeHtml(note)}</span>` : ''}</span>
-                                                        <span class="shrink-0 text-xs font-bold text-slate-800 dark:text-white">฿${balance.toLocaleString('th-TH', { maximumFractionDigits: 2 })}</span>
-                                                        <details class="relative">
+                                                    <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-x-2 gap-y-1.5 py-3">
+                                                        <span class="min-w-0"><span class="block truncate text-sm font-semibold text-slate-800 dark:text-white">${escapeHtml(acc.account_name)}</span><span class="text-[10px] uppercase text-slate-400">${acc.account_type}</span></span>
+                                                        <span class="shrink-0 self-start text-sm font-bold text-slate-800 dark:text-white">${balance.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                        <details class="relative self-start">
                                                             <summary class="list-none cursor-pointer p-1 text-slate-400"><i data-lucide="ellipsis" class="h-4 w-4"></i></summary>
                                                             <div class="absolute right-0 top-full z-30 min-w-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
                                                                 <button onclick="openAccountLedger('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="book-open" class="h-3.5 w-3.5"></i> สมุดบัญชี</button>
                                                                 <button onclick="openAccountModal('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="edit-3" class="h-3.5 w-3.5"></i> แก้ไข</button>
                                                                 <button onclick="deleteAccount('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i> ลบบัญชี</button>
                                                                 ${index > 0 ? `<button onclick="moveItemOrder('accounts', '${acc.id}', -1)" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="chevron-up" class="h-3.5 w-3.5"></i> เลื่อนขึ้น</button>` : ''}
-                                                                ${index < db.accounts.length - 1 ? `<button onclick="moveItemOrder('accounts', '${acc.id}', 1)" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="chevron-down" class="h-3.5 w-3.5"></i> เลื่อนลง</button>` : ''}
+                                                                ${index < matchingAccs.length - 1 ? `<button onclick="moveItemOrder('accounts', '${acc.id}', 1)" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="chevron-down" class="h-3.5 w-3.5"></i> เลื่อนลง</button>` : ''}
                                                             </div>
                                                         </details>
+                                                        ${note ? `<span class="col-span-3 min-w-0 whitespace-pre-wrap break-words rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-sm leading-relaxed text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">โน้ต: ${escapeHtml(note)}</span>` : ''}
                                                     </div>
                                                 `;
                                             }).join('')}
@@ -1691,9 +1725,9 @@
                                 <div>${t.transaction_note || '-'}</div>
                                 <div class="text-[9px] text-slate-400 uppercase">ประเภท: ${t.transaction_type}</div>
                             </td>
-                            <td class="py-2.5 px-2 text-right text-emerald-600 font-semibold">${increasesBalance ? (isLiability ? '฿' : '+฿') + amount.toLocaleString() : '-'}</td>
-                            <td class="py-2.5 px-2 text-right text-rose-500 font-semibold">${balanceDelta < 0 ? (isLiability ? '฿' : '-฿') + amount.toLocaleString() : '-'}</td>
-                            <td class="py-2.5 px-2 text-right font-bold text-slate-700 dark:text-slate-200">฿${runningBalance.toLocaleString()}</td>
+                            <td class="py-2.5 px-2 text-right text-emerald-600 font-semibold">${increasesBalance ? (isLiability ? '' : '+') + amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                            <td class="py-2.5 px-2 text-right text-rose-500 font-semibold">${balanceDelta < 0 ? (isLiability ? '' : '-') + amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                            <td class="py-2.5 px-2 text-right font-bold text-slate-700 dark:text-slate-200">${runningBalance.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         </tr>
                     `;
                 }).join('');
@@ -1703,7 +1737,7 @@
             document.getElementById('ledgerContent').innerHTML = `
                 <div class="bg-emerald-50 dark:bg-emerald-950/40 p-3 rounded-2xl flex justify-between items-center text-xs mb-3 border border-emerald-100 dark:border-emerald-900/40">
                     <span class="text-slate-600 dark:text-slate-300 font-medium">${isLiability ? 'ยอดหนี้ปัจจุบัน (Outstanding Debt)' : 'ยอดคงเหลือปัจจุบัน (Ending Balance)'}</span>
-                    <span class="font-bold text-base text-emerald-600">฿${Math.abs(Number(acc.balance)).toLocaleString()}</span>
+                    <span class="font-bold text-base text-emerald-600">${Math.abs(Number(acc.balance)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
@@ -1856,6 +1890,32 @@
             }
         }
 
+        function parseBudgetPeriodDate(value, isEnd = false) {
+            if (!value) return null;
+            const match = String(value).match(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/);
+            if (!match) return null;
+            const year = Number(match[1]);
+            const month = Number(match[2]) - 1;
+            const day = match[3] ? Number(match[3]) : (isEnd ? new Date(year, month + 1, 0).getDate() : 1);
+            const date = new Date(year, month, day);
+            if (isEnd) date.setHours(23, 59, 59, 999);
+            return date;
+        }
+
+        function formatBudgetPeriod(value, isEnd = false) {
+            const date = parseBudgetPeriodDate(value, isEnd);
+            return date ? date.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : value;
+        }
+
+        function budgetPeriodInputValue(value, isEnd = false) {
+            const date = parseBudgetPeriodDate(value, isEnd);
+            if (!date) return '';
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
         function renderBudgetsAndGoals(container) {
             container.innerHTML = `
                 <div class="space-y-5 animate-in fade-in duration-200">
@@ -1863,7 +1923,7 @@
                         <div class="flex justify-between items-center mb-2 px-1">
                             <div>
                                 <h2 class="text-sm font-bold">งบประมาณรายจ่าย (Budgets)</h2>
-                                <p class="text-[10px] text-slate-400">จัดลำดับและกำหนดช่วงเวลา start_period - end_period</p>
+                                <p class="text-[10px] text-blue-600 dark:text-blue-300">กำหนดช่วงวันที่ของงบ และติดตามยอดใช้ตามหมวดหมู่</p>
                             </div>
                             <button onclick="openBudgetModal()" class="bg-emerald-600 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
                                 <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มงบ
@@ -1872,15 +1932,25 @@
                         <div class="space-y-2.5">
                             ${db.budgets.map((bud, index) => {
                                 const cat = db.categories.find(c => c.id === bud.category_id) || { category_name: 'ทั่วไป' };
+                                const periodStart = parseBudgetPeriodDate(bud.start_period);
+                                const periodEnd = parseBudgetPeriodDate(bud.end_period, true);
                                 const spent = db.transactions
-                                    .filter(tx => tx.category_id === bud.category_id && ['expense', 'credit_spend'].includes(tx.transaction_type))
+                                    .filter(tx => {
+                                        if (tx.category_id !== bud.category_id || !['expense', 'credit_spend'].includes(tx.transaction_type)) return false;
+                                        const txDate = new Date(tx.transaction_date);
+                                        return (!periodStart || txDate >= periodStart) && (!periodEnd || txDate <= periodEnd);
+                                    })
                                     .reduce((s, t) => s + Number(t.amount), 0);
-                                const percent = Math.min(100, Math.round((spent / bud.budget_limit) * 100));
+                                const limit = Number(bud.budget_limit) || 0;
+                                const percent = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
+                                const isOverBudget = spent > limit;
+                                const overAmount = Math.max(0, spent - limit);
                                 return `
-                                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-2">
+                                    <div class="relative overflow-hidden bg-blue-50/70 dark:bg-slate-800 p-4 rounded-3xl border ${isOverBudget ? 'border-rose-300 dark:border-rose-800' : 'border-blue-200 dark:border-blue-900/60'} shadow-sm space-y-2">
+                                        <div class="absolute inset-y-0 left-0 w-1 ${isOverBudget ? 'bg-rose-500' : 'bg-blue-500'}"></div>
                                         <div class="flex justify-between items-start">
                                             <div>
-                                                <span class="text-[9px] uppercase font-bold text-emerald-600">${bud.start_period} ถึง ${bud.end_period}</span>
+                                                <span class="text-[10px] font-bold text-blue-700 dark:text-blue-300">${formatBudgetPeriod(bud.start_period)} ถึง ${formatBudgetPeriod(bud.end_period, true)}</span>
                                                 <h4 class="font-bold text-xs text-slate-900 dark:text-white mt-0.5">${bud.budget_name} (${cat.category_name})</h4>
                                             </div>
                                             <div class="flex items-center space-x-1">
@@ -1890,13 +1960,14 @@
                                                 <button onclick="deleteBudget('${bud.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
                                             </div>
                                         </div>
+                                        ${isOverBudget ? `<div role="alert" class="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"><i data-lucide="triangle-alert" class="h-4 w-4 shrink-0"></i><span>ใช้เกินงบแล้ว ${overAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท</span></div>` : ''}
                                         <div>
                                             <div class="flex justify-between text-[10px] mb-1 text-slate-400">
-                                                <span>ใช้ไป: ฿${spent.toLocaleString()}</span>
-                                                <span class="font-bold text-slate-700 dark:text-slate-200">งบ: ฿${Number(bud.budget_limit).toLocaleString()} (${percent}%)</span>
+                                                <span>ใช้ไป: ${spent.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                <span class="font-bold ${isOverBudget ? 'text-rose-700 dark:text-rose-300' : 'text-blue-800 dark:text-blue-200'}">งบ: ${limit.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${percent}%)</span>
                                             </div>
-                                            <div class="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                                                <div class="bg-emerald-500 h-full rounded-full" style="width: ${percent}%"></div>
+                                            <div class="w-full bg-blue-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
+                                                <div class="${isOverBudget ? 'bg-rose-500' : 'bg-blue-500'} h-full rounded-full transition-all" style="width: ${percent}%"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -1911,19 +1982,24 @@
                                 <h2 class="text-sm font-bold">เป้าหมายเงินออม (Savings Goals)</h2>
                                 <p class="text-[10px] text-slate-400">จัดลำดับเป้าหมายการออมและคำนวณยอดต่อเดือน</p>
                             </div>
-                            <button onclick="openGoalModal()" class="bg-emerald-600 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                            <button onclick="openGoalModal()" class="bg-violet-600 hover:bg-violet-700 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md shadow-violet-600/20">
                                 <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มเป้าหมาย
                             </button>
                         </div>
                         <div class="space-y-2.5">
                             ${db.savings_goals.map((goal, index) => {
-                                const percent = Math.min(100, Math.round((goal.current_amount / goal.target_amount) * 100));
+                                const targetAmount = Number(goal.target_amount) || 0;
+                                const currentAmount = Number(goal.current_amount) || 0;
+                                const percent = targetAmount > 0 ? Math.min(100, Math.round((currentAmount / targetAmount) * 100)) : 0;
+                                const isGoalReached = targetAmount > 0 && currentAmount >= targetAmount;
                                 return `
-                                    <div class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-2">
+                                    <div class="relative overflow-hidden bg-violet-50 dark:bg-slate-800 p-4 rounded-3xl border border-violet-200 dark:border-violet-800 shadow-sm space-y-2">
+                                        <div class="absolute inset-y-0 left-0 w-1 bg-violet-600"></div>
                                         <div class="flex justify-between items-start">
                                             <div>
-                                                <h4 class="font-bold text-xs text-slate-900 dark:text-white">${goal.goal_title}</h4>
-                                                <div class="text-[10px] text-slate-400">ออมเดือนละ ฿${Number(goal.monthly_target).toLocaleString()} (${goal.saved_periods}/${goal.total_periods} งวด)</div>
+                                                <div class="mb-1 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[9px] font-semibold text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"><i data-lucide="target" class="h-3 w-3"></i> เป้าหมายเงินออม</div>
+                                                <h4 class="font-bold text-sm text-slate-900 dark:text-white">${escapeHtml(goal.goal_title)}</h4>
+                                                <div class="text-[10px] text-slate-400">ออมเดือนละ ${Number(goal.monthly_target).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${goal.saved_periods}/${goal.total_periods} งวด)</div>
                                             </div>
                                             <div class="flex items-center space-x-1">
                                                 ${index > 0 ? `<button onclick="moveItemOrder('savings_goals', '${goal.id}', -1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>` : ''}
@@ -1932,13 +2008,14 @@
                                                 <button onclick="deleteGoal('${goal.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
                                             </div>
                                         </div>
+                                        ${isGoalReached ? `<div role="status" class="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"><i data-lucide="party-popper" class="h-4 w-4 shrink-0"></i><span>ยินดีด้วย! คุณออมถึงเป้าหมายแล้ว 🎉</span></div>` : ''}
                                         <div>
                                             <div class="flex justify-between text-[10px] mb-1 text-slate-400">
-                                                <span>เก็บแล้ว: ฿${Number(goal.current_amount).toLocaleString()}</span>
-                                                <span class="font-bold text-slate-700 dark:text-slate-200">เป้าหมาย: ฿${Number(goal.target_amount).toLocaleString()} (${percent}%)</span>
+                                                <span class="text-violet-700 dark:text-violet-300">เก็บแล้ว: ${currentAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                <span class="font-bold text-violet-800 dark:text-violet-200">เป้าหมาย: ${targetAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${percent}%)</span>
                                             </div>
-                                            <div class="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                                                <div class="bg-emerald-500 h-full rounded-full" style="width: ${percent}%"></div>
+                                            <div class="w-full bg-violet-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
+                                                <div class="${isGoalReached ? 'bg-emerald-500' : 'bg-violet-600'} h-full rounded-full transition-all" style="width: ${percent}%"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -1973,12 +2050,12 @@
                             </div>
                             <div class="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label class="block text-[10px] font-medium mb-1">เริ่มต้น (Start Period)</label>
-                                    <input type="text" id="budStart" required value="2026-01" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                                    <label class="block text-[10px] font-medium mb-1">วันที่เริ่มต้น</label>
+                                    <input type="date" id="budStart" required value="${new Date().getFullYear()}-01-01" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
                                 </div>
                                 <div>
-                                    <label class="block text-[10px] font-medium mb-1">สิ้นสุด (End Period)</label>
-                                    <input type="text" id="budEnd" required value="2026-06" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
+                                    <label class="block text-[10px] font-medium mb-1">วันที่สิ้นสุด</label>
+                                    <input type="date" id="budEnd" required value="${new Date().getFullYear()}-12-31" class="w-full px-2 py-1.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-900">
                                 </div>
                             </div>
                             <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl text-xs transition shadow-md">บันทึกงบ</button>
@@ -2032,8 +2109,8 @@
                     document.getElementById('budName').value = bud.budget_name;
                     document.getElementById('budCategoryId').value = bud.category_id;
                     document.getElementById('budLimit').value = bud.budget_limit;
-                    document.getElementById('budStart').value = bud.start_period;
-                    document.getElementById('budEnd').value = bud.end_period;
+                    document.getElementById('budStart').value = budgetPeriodInputValue(bud.start_period);
+                    document.getElementById('budEnd').value = budgetPeriodInputValue(bud.end_period, true);
                     document.getElementById('budModalTitle').innerHTML = '<i data-lucide="edit-3" class="w-4 h-4 text-emerald-500"></i> แก้ไขงบประมาณ';
                 }
             } else {
@@ -2071,12 +2148,18 @@
         async function handleSaveBudget(e) {
             e.preventDefault();
             const editId = document.getElementById('editBudId').value;
+            const startPeriod = document.getElementById('budStart').value;
+            const endPeriod = document.getElementById('budEnd').value;
+            if (!startPeriod || !endPeriod || startPeriod > endPeriod) {
+                showAlert('กรุณาเลือกช่วงวันที่ให้ถูกต้อง โดยวันสิ้นสุดต้องไม่ก่อนวันเริ่มต้น', 'error');
+                return;
+            }
             const budData = {
                 budget_name: document.getElementById('budName').value,
                 category_id: document.getElementById('budCategoryId').value,
                 budget_limit: Number(document.getElementById('budLimit').value),
-                start_period: document.getElementById('budStart').value,
-                end_period: document.getElementById('budEnd').value
+                start_period: startPeriod,
+                end_period: endPeriod
             };
             if (editId) {
                 await updateInDB('budgets', editId, budData);
@@ -2183,7 +2266,7 @@
                     ? Math.abs(Number(account.balance) || 0)
                     : Number(account.balance) || 0
             }));
-            const formatBaht = amount => `฿${amount.toLocaleString('th-TH', { maximumFractionDigits: 2 })}`;
+            const formatBaht = amount => `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
             container.innerHTML = `
                 <div class="space-y-4 animate-in fade-in duration-200">
@@ -2307,7 +2390,7 @@
             `;
 
             setTimeout(() => {
-                const formatTooltipBaht = value => `฿${Number(value).toLocaleString('th-TH', { maximumFractionDigits: 2 })}`;
+                const formatTooltipBaht = value => `${Number(value).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                 const palette = ['#2563eb', '#8b5cf6', '#f97316', '#14b8a6', '#ec4899', '#f59e0b', '#06b6d4', '#84cc16'];
                 const expenseCanvas = document.getElementById('expenseChart');
                 if (expenseCanvas) {
