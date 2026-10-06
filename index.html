@@ -313,6 +313,7 @@
         let currentTab = 'dashboard';
         let analyticsAccountId = '';
         let expandedAccountType = '';
+        let creditRemindersExpanded = false;
 
         let globalFilter = {
             mode: 'month',
@@ -326,8 +327,10 @@
             categories: [],
             budgets: [],
             transactions: [],
-            savings_goals: []
+            savings_goals: [],
+            summary_notes: {}
         };
+        const summaryNoteSaveTimers = new Map();
 
         let lastReminderDate = new Date().toDateString();
 
@@ -343,6 +346,14 @@
             if (today === lastReminderDate) return;
             lastReminderDate = today;
             if (currentUser && currentTab === 'dashboard') renderCurrentTab();
+        }
+
+        function toggleCreditReminders() {
+            creditRemindersExpanded = !creditRemindersExpanded;
+            renderCurrentTab();
+            if (creditRemindersExpanded) {
+                setTimeout(() => document.getElementById('creditReminders')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+            }
         }
 
         async function checkAuthSession() {
@@ -406,7 +417,7 @@
         async function handleLogout() {
             await supabaseClient.auth.signOut();
             currentUser = null;
-            db = { accounts: [], categories: [], budgets: [], transactions: [], savings_goals: [] };
+            db = { accounts: [], categories: [], budgets: [], transactions: [], savings_goals: [], summary_notes: {} };
             updateAuthUI(false);
             openAuthScreen();
             showAlert('ออกจากระบบเรียบร้อย');
@@ -473,6 +484,31 @@
                 db.budgets = bud.data || [];
                 db.transactions = tx.data || [];
                 db.savings_goals = goal.data || [];
+                db.summary_notes = Object.fromEntries(db.accounts.map(account => [String(account.id), account.note || '']));
+
+                // Migrate notes previously stored only in this browser into the accounts table.
+                for (const account of db.accounts) {
+                    const accountId = String(account.id);
+                    if (account.note) continue;
+                    const legacyKey = `savetung-summary-note-${userId}-${accountId}`;
+                    let legacyNote;
+                    try {
+                        legacyNote = localStorage.getItem(legacyKey);
+                    } catch (error) {
+                        console.warn('Unable to read legacy summary note:', error);
+                        continue;
+                    }
+                    if (legacyNote === null) continue;
+                    const { error } = await supabaseClient.from('accounts').update({ note: legacyNote })
+                        .eq('id', account.id).eq('user_id', userId);
+                    if (error) {
+                        console.error('Summary note migration error:', error);
+                    } else {
+                        account.note = legacyNote;
+                        db.summary_notes[accountId] = legacyNote;
+                        try { localStorage.removeItem(legacyKey); } catch (error) { console.warn('Unable to remove migrated note:', error); }
+                    }
+                }
             } catch (e) {
                 console.error("Supabase load exception:", e);
                 showAlert("เกิดข้อผิดพลาดในการเชื่อมต่อ Supabase: " + e.message, 'error');
@@ -601,23 +637,31 @@
         }
 
         function saveSummaryNote(input) {
-            const storageKey = getSummaryNoteStorageKey(input.dataset.accountId);
-            if (!storageKey) return;
-            try {
-                localStorage.setItem(storageKey, input.value);
-            } catch (error) {
-                showAlert('ไม่สามารถบันทึกโน้ตในเบราว์เซอร์นี้ได้', 'error');
-            }
+            const accountId = input.dataset.accountId;
+            if (!currentUser || !accountId) return;
+            const note = input.value;
+            db.summary_notes[accountId] = note;
+            const status = document.getElementById(`summaryNoteStatus-${accountId}`);
+            if (status) status.textContent = 'กำลังบันทึก…';
+
+            clearTimeout(summaryNoteSaveTimers.get(accountId));
+            summaryNoteSaveTimers.set(accountId, setTimeout(async () => {
+                const { error } = await supabaseClient.from('accounts').update({ note })
+                    .eq('id', accountId).eq('user_id', currentUser.id);
+                if (error) {
+                    console.error('Summary note save error:', error);
+                    if (status) status.textContent = 'บันทึกไม่สำเร็จ';
+                    showAlert('บันทึกโน้ตไม่สำเร็จ: ' + error.message, 'error');
+                    return;
+                }
+                const account = db.accounts.find(item => String(item.id) === String(accountId));
+                if (account) account.note = note;
+                if (status) status.textContent = 'บันทึกแล้ว';
+            }, 500));
         }
 
         function getSummaryNote(accountId) {
-            const storageKey = getSummaryNoteStorageKey(accountId);
-            try {
-                return storageKey ? localStorage.getItem(storageKey) || '' : '';
-            } catch (error) {
-                console.warn('Unable to read summary note:', error);
-                return '';
-            }
+            return db.summary_notes?.[String(accountId)] || '';
         }
 
         function renderSummaryNote(accountId) {
@@ -628,7 +672,7 @@
                         <label for="summaryNote-${accountId}" class="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
                             <i data-lucide="notebook-pen" class="w-4 h-4 text-emerald-500"></i> โน้ตสรุปยอด
                         </label>
-                        <span class="text-[10px] text-slate-400">บันทึกอัตโนมัติ</span>
+                        <span id="summaryNoteStatus-${accountId}" class="text-[10px] text-slate-400">บันทึกอัตโนมัติไปยัง Supabase</span>
                     </div>
                     <textarea id="summaryNote-${accountId}" data-account-id="${accountId}" rows="3" maxlength="200" oninput="saveSummaryNote(this)" placeholder="เช่น คงเหลือหลังจ่ายค่าน้ำค่าไฟ" class="w-full resize-y px-3 py-2 rounded-xl border border-emerald-200 dark:border-slate-600 bg-emerald-50/60 dark:bg-slate-900 text-xs outline-none focus:ring-2 focus:ring-emerald-500">${escapeHtml(note)}</textarea>
                 </section>
@@ -865,15 +909,21 @@
                 const [year, month, day] = globalFilter.endDate.split('-').map(Number);
                 reminderDate = new Date(year, month - 1, day);
             }
-            const cardsWithDebt = db.accounts.filter(card => card.account_type === 'credit' && Math.abs(Number(card.balance) || 0) > 0);
-            let alertHtml = cardsWithDebt.length ? `
-                <section class="rounded-2xl border border-amber-200 bg-amber-50 p-2.5 shadow-sm dark:border-amber-800 dark:bg-amber-950/30">
-                    <div class="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
-                        <i data-lucide="bell-ring" class="h-3.5 w-3.5 text-amber-600"></i>
-                        แจ้งเตือนยอดที่ต้องเตรียมชำระบัตรเครดิต
-                    </div>
-                    <div class="grid grid-cols-2 gap-2">
-                        ${cardsWithDebt.map(card => {
+            const creditCards = db.accounts.filter(card => card.account_type === 'credit');
+            let alertHtml = creditCards.length ? `
+                <section id="creditReminders" class="scroll-mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-2.5 shadow-sm dark:border-amber-800 dark:bg-amber-950/30">
+                    <button type="button" onclick="toggleCreditReminders()" aria-expanded="${creditRemindersExpanded}" class="flex w-full items-center justify-between gap-2 text-left">
+                        <span class="flex items-center gap-1.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                            <i data-lucide="bell-ring" class="h-3.5 w-3.5 shrink-0 text-amber-600"></i>
+                            แจ้งเตือนยอดชำระบัตรเครดิต (${creditCards.length} ใบ)
+                        </span>
+                        <span class="flex shrink-0 items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                            ${creditRemindersExpanded ? 'ย่อ' : 'ดูทั้งหมด'}
+                            <i data-lucide="chevron-${creditRemindersExpanded ? 'up' : 'down'}" class="h-4 w-4"></i>
+                        </span>
+                    </button>
+                    ${creditRemindersExpanded ? `<div class="mt-2 space-y-2">
+                        ${creditCards.map(card => {
                             const summary = getCardPaymentSummary(card, reminderDate, today);
                             if (!summary) {
                                 return `
@@ -909,7 +959,7 @@
                                 </div>
                             `;
                         }).join('')}
-                    </div>
+                    </div>` : ''}
                 </section>
             ` : '';
 
@@ -1034,13 +1084,13 @@
             document.getElementById('subAccountContent').innerHTML = matchingAccounts.map(acc => {
                 const note = getSummaryNote(acc.id);
                 return `
-                    <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2 min-w-0">
-                        <div class="min-w-0">
-                            <div class="font-bold text-xs text-slate-900 dark:text-white truncate">${escapeHtml(acc.account_name)}</div>
+                    <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center gap-2 min-w-0">
+                        <div class="min-w-0 flex-1">
+                            <div class="font-bold text-xs text-slate-900 dark:text-white whitespace-normal break-words">${escapeHtml(acc.account_name)}</div>
                             <div class="text-[10px] text-slate-400">${['credit', 'loan'].includes(acc.account_type) ? 'ยอดหนี้' : 'คงเหลือ'}: ฿${(['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : Number(acc.balance)).toLocaleString()}</div>
                             ${note.trim() ? `<p class="mt-1.5 rounded-lg bg-white dark:bg-slate-800 px-2 py-1.5 text-[10px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-words">${escapeHtml(note)}</p>` : ''}
                         </div>
-                        <button onclick="closeSubAccountModal(); openAccountLedger('${acc.id}')" class="w-full px-2 py-1.5 bg-emerald-600 text-white rounded-xl text-[11px] font-semibold">ดูสมุดบัญชี</button>
+                        <button onclick="closeSubAccountModal(); openAccountLedger('${acc.id}')" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white" title="ดูสมุดบัญชี" aria-label="ดูสมุดบัญชี"><i data-lucide="book-open" class="h-4 w-4"></i></button>
                     </div>
                 `;
             }).join('') || '<div class="col-span-2 text-center py-4 text-xs text-slate-400">ไม่มีบัญชีในประเภทนี้</div>';
