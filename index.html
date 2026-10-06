@@ -318,10 +318,11 @@
 
         const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        let currentUser = null;
+                let currentUser = null;
         let isSignUpMode = false;
         let currentTab = 'dashboard';
         let analyticsAccountId = '';
+        let analyticsCategoryId = '';
         let expandedAccountType = '';
         let creditRemindersExpanded = false;
 
@@ -1527,16 +1528,25 @@
                                         <i data-lucide="chevron-${isExpanded ? 'up' : 'down'}" class="h-4 w-4 shrink-0 text-slate-400"></i>
                                     </button>
                                     ${isExpanded ? `
-                                        <div class="divide-y divide-slate-100 border-t border-slate-100 px-4 dark:divide-slate-700 dark:border-slate-700">
+                                                                                <div class="space-y-2.5 border-t border-slate-100 px-3 py-3 dark:border-slate-700 sm:px-4">
                                             ${matchingAccs.map((acc, index) => {
-                                                const balance = ['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : Number(acc.balance);
+                                                const isLiabilityAccount = ['credit', 'loan'].includes(acc.account_type);
+                                                const balance = isLiabilityAccount ? Math.abs(Number(acc.balance)) : Number(acc.balance);
                                                 const note = getSummaryNote(acc.id).trim();
+                                                const accountTheme = {
+                                                    cash: { card: 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/70 dark:bg-emerald-950/25', badge: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200', accent: 'bg-emerald-500' },
+                                                    bank: { card: 'border-blue-200 bg-blue-50/70 dark:border-blue-900/70 dark:bg-blue-950/25', badge: 'bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200', accent: 'bg-blue-500' },
+                                                    credit: { card: 'border-violet-200 bg-violet-50/70 dark:border-violet-900/70 dark:bg-violet-950/25', badge: 'bg-violet-100 text-violet-800 dark:bg-violet-900/60 dark:text-violet-200', accent: 'bg-violet-500' },
+                                                    investment: { card: 'border-amber-200 bg-amber-50/70 dark:border-amber-900/70 dark:bg-amber-950/25', badge: 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200', accent: 'bg-amber-500' },
+                                                    loan: { card: 'border-rose-200 bg-rose-50/70 dark:border-rose-900/70 dark:bg-rose-950/25', badge: 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200', accent: 'bg-rose-500' }
+                                                }[acc.account_type] || { card: 'border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-900', badge: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200', accent: 'bg-slate-400' };
                                                 return `
-                                                    <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-x-2 gap-y-1.5 py-3">
-                                                        <span class="min-w-0"><span class="block truncate text-sm font-semibold text-slate-800 dark:text-white">${escapeHtml(acc.account_name)}</span><span class="text-[10px] uppercase text-slate-400">${acc.account_type}</span></span>
-                                                        <span class="shrink-0 self-start text-sm font-bold text-slate-800 dark:text-white">${balance.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                    <div class="relative grid grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-x-2 gap-y-2 overflow-hidden rounded-2xl border ${accountTheme.card} px-3 py-3 shadow-[0_3px_10px_rgba(15,23,42,0.07),inset_0_1px_0_rgba(255,255,255,0.9)] transition-shadow hover:shadow-md dark:shadow-[0_3px_10px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.04)]">
+                                                        <span class="absolute inset-y-0 left-0 w-1 ${accountTheme.accent}"></span>
+                                                        <span class="min-w-0"><span class="block truncate text-sm font-bold text-slate-900 dark:text-slate-100">${escapeHtml(acc.account_name)}</span><span class="mt-1 inline-flex rounded-full ${accountTheme.badge} px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide">${acc.account_type}</span></span>
+                                                        <span class="shrink-0 self-start pt-0.5 text-sm font-bold ${isLiabilityAccount ? 'text-rose-600 dark:text-rose-400' : 'text-blue-700 dark:text-blue-300'}">${balance.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                         <details class="relative self-start">
-                                                            <summary class="list-none cursor-pointer p-1 text-slate-400"><i data-lucide="ellipsis" class="h-4 w-4"></i></summary>
+                                                            <summary class="list-none cursor-pointer rounded-lg p-1 text-slate-500 hover:bg-white hover:text-blue-600 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-blue-300"><i data-lucide="ellipsis" class="h-4 w-4"></i></summary>
                                                             <div class="absolute right-0 top-full z-30 min-w-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
                                                                 <button onclick="openAccountLedger('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="book-open" class="h-3.5 w-3.5"></i> สมุดบัญชี</button>
                                                                 <button onclick="openAccountModal('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="edit-3" class="h-3.5 w-3.5"></i> แก้ไข</button>
@@ -1545,7 +1555,7 @@
                                                                 ${index < matchingAccs.length - 1 ? `<button onclick="moveItemOrder('accounts', '${acc.id}', 1)" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="chevron-down" class="h-3.5 w-3.5"></i> เลื่อนลง</button>` : ''}
                                                             </div>
                                                         </details>
-                                                        ${note ? `<span class="col-span-3 min-w-0 whitespace-pre-wrap break-words rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-sm leading-relaxed text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">โน้ต: ${escapeHtml(note)}</span>` : ''}
+                                                        ${note ? `<span class="col-span-3 min-w-0 whitespace-pre-wrap break-words rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs leading-relaxed text-black shadow-inner dark:border-slate-500 dark:bg-white dark:text-black"> <span class="font-semibold text-black">โน้ต:</span> ${escapeHtml(note)}</span>` : ''}
                                                     </div>
                                                 `;
                                             }).join('')}
@@ -2213,8 +2223,13 @@
             }
         }
 
-        function setAnalyticsAccount(accountId) {
+                function setAnalyticsAccount(accountId) {
             analyticsAccountId = accountId;
+            renderCurrentTab();
+        }
+
+        function setAnalyticsCategory(categoryId) {
+            analyticsCategoryId = categoryId;
             renderCurrentTab();
         }
 
@@ -2236,11 +2251,19 @@
             const isAllAccounts = analyticsAccountId === 'all';
             const selectedAccount = isAllAccounts ? null : db.accounts.find(account => String(account.id) === String(analyticsAccountId)) || db.accounts[0] || null;
             analyticsAccountId = isAllAccounts ? 'all' : selectedAccount ? selectedAccount.id : '';
-            const accountExpenseTxs = isAllAccounts
+                        const accountExpenseTxs = isAllAccounts
                 ? filteredTxs.filter(tx => ['expense', 'credit_spend'].includes(tx.transaction_type))
                 : selectedAccount
                     ? filteredTxs.filter(tx => tx.wallet_id === selectedAccount.id && ['expense', 'credit_spend'].includes(tx.transaction_type))
                     : [];
+            const expenseCategories = db.categories.filter(category => category.category_type === 'expense');
+            if (analyticsCategoryId && !expenseCategories.some(category => String(category.id) === String(analyticsCategoryId))) {
+                analyticsCategoryId = '';
+            }
+            const selectedExpenseTxs = accountExpenseTxs
+                .filter(tx => !analyticsCategoryId || String(tx.category_id) === String(analyticsCategoryId))
+                .sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
+            const selectedExpenseTotal = selectedExpenseTxs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
             const accountExpenseTotal = accountExpenseTxs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
             const accountExpenseByCategory = Object.values(accountExpenseTxs.reduce((groups, tx) => {
                 const category = db.categories.find(item => item.id === tx.category_id);
@@ -2259,14 +2282,7 @@
                 }))
                 .filter(category => category.total > 0)
                 .sort((a, b) => b.total - a.total);
-            const accountBalances = db.accounts.map(account => ({
-                name: account.account_name,
-                type: account.account_type,
-                balance: ['credit', 'loan'].includes(account.account_type)
-                    ? Math.abs(Number(account.balance) || 0)
-                    : Number(account.balance) || 0
-            }));
-            const formatBaht = amount => `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                        const formatBaht = amount => `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
             container.innerHTML = `
                 <div class="space-y-4 animate-in fade-in duration-200">
@@ -2337,10 +2353,15 @@
                             <select id="analyticsAccountSelect" onchange="setAnalyticsAccount(this.value)" class="mb-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-900 dark:focus:ring-blue-900">
                                 <option value="all" ${isAllAccounts ? 'selected' : ''}>รวมทุกบัญชี</option>
                                 ${db.accounts.map(account => `<option value="${account.id}" ${selectedAccount?.id === account.id ? 'selected' : ''}>${escapeHtml(account.account_name)} · ${account.account_type === 'credit' ? 'บัตรเครดิต' : account.account_type === 'bank' ? 'ธนาคาร' : account.account_type === 'cash' ? 'เงินสด' : account.account_type === 'investment' ? 'ลงทุน' : 'หนี้สิน'}</option>`).join('')}
+                                                        </select>
+                            <label for="analyticsCategorySelect" class="mb-1.5 block text-[10px] font-medium text-slate-500 dark:text-slate-400">เลือกหมวดรายจ่าย</label>
+                            <select id="analyticsCategorySelect" onchange="setAnalyticsCategory(this.value)" class="mb-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-900 dark:focus:ring-blue-900">
+                                <option value="" ${!analyticsCategoryId ? 'selected' : ''}>ทุกหมวดหมู่</option>
+                                ${expenseCategories.map(category => `<option value="${category.id}" ${String(analyticsCategoryId) === String(category.id) ? 'selected' : ''}>${escapeHtml(category.category_name)}</option>`).join('')}
                             </select>
                             <div class="mb-3 flex items-center justify-between rounded-2xl bg-blue-50 p-3 dark:bg-blue-950/30">
-                                <div><div class="text-[10px] text-slate-500 dark:text-slate-400">${isAllAccounts ? 'ทุกบัญชี' : escapeHtml(selectedAccount?.account_name || '')} · รายจ่ายรวม</div><div class="mt-0.5 text-lg font-bold text-blue-700 dark:text-blue-300">${formatBaht(accountExpenseTotal)}</div></div>
-                                <span class="rounded-full bg-white px-2.5 py-1 text-[9px] font-semibold text-blue-600 dark:bg-slate-800 dark:text-blue-300">${accountExpenseTxs.length} รายการ</span>
+                                <div><div class="text-[10px] text-slate-500 dark:text-slate-400">${isAllAccounts ? 'ทุกบัญชี' : escapeHtml(selectedAccount?.account_name || '')} · ${analyticsCategoryId ? escapeHtml(expenseCategories.find(category => String(category.id) === String(analyticsCategoryId))?.category_name || '') : 'รายจ่ายรวม'}</div><div class="mt-0.5 text-lg font-bold text-blue-700 dark:text-blue-300">${formatBaht(selectedExpenseTotal)}</div></div>
+                                <span class="rounded-full bg-white px-2.5 py-1 text-[9px] font-semibold text-blue-600 dark:bg-slate-800 dark:text-blue-300">${selectedExpenseTxs.length} รายการ</span>
                             </div>
                             <div class="space-y-2.5">
                                 ${accountExpenseByCategory.map(category => {
@@ -2351,11 +2372,11 @@
                                     </div>`;
                                 }).join('') || '<div class="rounded-2xl bg-slate-50 py-5 text-center text-[10px] text-slate-400 dark:bg-slate-900">ไม่มีรายจ่ายของบัญชีนี้ในช่วงเวลาที่เลือก</div>'}
                             </div>
-                            ${accountExpenseTxs.length ? `
+                                                        ${selectedExpenseTxs.length ? `
                                 <div class="mt-4 border-t border-slate-100 pt-3 dark:border-slate-700">
-                                    <div class="mb-2 text-[10px] font-bold text-slate-500 dark:text-slate-400">รายการล่าสุด</div>
+                                    <div class="mb-2 text-[10px] font-bold text-slate-500 dark:text-slate-400">รายการที่ตรงกับตัวกรอง</div>
                                     <div class="space-y-2">
-                                        ${[...accountExpenseTxs].sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date)).slice(0, 5).map(tx => {
+                                        ${selectedExpenseTxs.map(tx => {
                                             const category = db.categories.find(item => item.id === tx.category_id);
                                             const account = db.accounts.find(item => item.id === tx.wallet_id);
                                             const date = new Date(tx.transaction_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
@@ -2379,13 +2400,7 @@
                         </div>
                     </section>
 
-                    <section class="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-                        <div class="mb-3 flex items-center justify-between gap-2">
-                            <div><h3 class="text-xs font-bold text-slate-800 dark:text-white">ยอดแต่ละบัญชี</h3><p class="mt-0.5 text-[9px] text-slate-400">หนี้สินแสดงเป็นยอดหนี้คงค้าง</p></div>
-                            <span class="rounded-full bg-blue-50 px-2.5 py-1 text-[9px] font-semibold text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">${accountBalances.length} บัญชี</span>
-                        </div>
-                        ${accountBalances.length ? `<div style="height:${Math.max(210, accountBalances.length * 38)}px"><canvas id="accountChart"></canvas></div>` : '<div class="flex h-40 flex-col items-center justify-center rounded-2xl bg-slate-50 text-center dark:bg-slate-900"><span class="mb-2 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800"><i data-lucide="wallet" class="h-5 w-5"></i></span><p class="text-xs font-medium text-slate-500">ยังไม่มีบัญชี</p></div>'}
-                    </section>
+                    
                 </div>
             `;
 
@@ -2438,36 +2453,7 @@
                     });
                 }
 
-                const accountCanvas = document.getElementById('accountChart');
-                if (accountCanvas) {
-                    new Chart(accountCanvas.getContext('2d'), {
-                        type: 'bar',
-                        data: {
-                            labels: accountBalances.map(account => account.name),
-                            datasets: [{
-                                data: accountBalances.map(account => account.balance),
-                                backgroundColor: accountBalances.map(account => ['credit', 'loan'].includes(account.type) ? '#fb7185' : '#3b82f6'),
-                                borderRadius: 8,
-                                borderSkipped: false,
-                                barThickness: 18
-                            }]
-                        },
-                        options: {
-                            indexAxis: 'y',
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            layout: { padding: { right: 8 } },
-                            plugins: {
-                                legend: { display: false },
-                                tooltip: { callbacks: { label: context => ` ${['credit', 'loan'].includes(accountBalances[context.dataIndex].type) ? 'ยอดหนี้' : 'ยอดเงิน'}: ${formatTooltipBaht(context.raw)}` } }
-                            },
-                            scales: {
-                                x: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.15)' }, ticks: { callback: value => Number(value).toLocaleString('th-TH'), font: { family: 'Prompt', size: 9 } } },
-                                y: { grid: { display: false }, ticks: { font: { family: 'Prompt', size: 10 }, color: document.documentElement.classList.contains('dark') ? '#cbd5e1' : '#475569' } }
-                            }
-                        }
-                    });
-                }
+                
             }, 100);
         }
     </script>
