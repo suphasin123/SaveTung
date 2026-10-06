@@ -160,9 +160,9 @@
             </main>
 
             <!-- Floating Quick Add Transaction Button -->
-            <div class="absolute bottom-20 right-5 z-30">
-                <button onclick="openTransactionModal()" class="w-14 h-14 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full flex items-center justify-center shadow-xl shadow-emerald-600/40 transform active:scale-95 transition-all" title="บันทึกรายการ">
-                    <i data-lucide="plus" class="w-7 h-7"></i>
+            <div class="absolute bottom-20 right-4 z-30">
+                <button onclick="openTransactionModal()" class="w-11 h-11 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full flex items-center justify-center shadow-xl shadow-emerald-600/40 transform active:scale-95 transition-all" title="บันทึกรายการ">
+                    <i data-lucide="plus" class="w-5 h-5"></i>
                 </button>
             </div>
 
@@ -596,14 +596,18 @@
             }
         }
 
-        function renderSummaryNote(accountId) {
-            let note = '';
+        function getSummaryNote(accountId) {
             const storageKey = getSummaryNoteStorageKey(accountId);
             try {
-                note = storageKey ? localStorage.getItem(storageKey) || '' : '';
+                return storageKey ? localStorage.getItem(storageKey) || '' : '';
             } catch (error) {
                 console.warn('Unable to read summary note:', error);
+                return '';
             }
+        }
+
+        function renderSummaryNote(accountId) {
+            const note = getSummaryNote(accountId);
             return `
                 <section class="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-2">
                     <div class="flex items-center justify-between gap-2">
@@ -767,21 +771,47 @@
             const periodIncome = filteredTxs.filter(tx => tx.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0);
             const periodExpense = filteredTxs.filter(tx => ['expense', 'credit_spend'].includes(tx.transaction_type)).reduce((s, t) => s + Number(t.amount), 0);
 
-            let alertHtml = '';
             const now = new Date();
-            db.accounts.filter(acc => acc.account_type === 'credit').forEach(card => {
-                const todayDay = now.getDate();
-                if (card.due_date && Math.abs(card.due_date - todayDay) <= 3) {
-                    alertHtml += `
-                        <div class="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl p-3 flex items-center justify-between text-xs">
-                            <div class="flex items-center space-x-2 text-amber-800 dark:text-amber-300">
-                                <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 shrink-0"></i>
-                                <span><b>${card.account_name}</b> ครบกำหนดชำระวันที่ ${card.due_date} (ยอดหนี้ ฿${Math.abs(card.balance).toLocaleString()})</span>
-                            </div>
-                        </div>
-                    `;
-                }
-            });
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const cardsWithDebt = db.accounts.filter(card => card.account_type === 'credit' && Math.abs(Number(card.balance) || 0) > 0);
+            let alertHtml = cardsWithDebt.length ? `
+                <section class="rounded-2xl border border-amber-200 bg-amber-50 p-2.5 shadow-sm dark:border-amber-800 dark:bg-amber-950/30">
+                    <div class="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                        <i data-lucide="bell-ring" class="h-3.5 w-3.5 text-amber-600"></i>
+                        แจ้งเตือนบัตรเครดิตที่มียอดค้างชำระ
+                    </div>
+                    <div class="grid grid-cols-2 gap-1.5">
+                        ${cardsWithDebt.map(card => {
+                            const outstanding = Math.abs(Number(card.balance) || 0);
+                            const dueDay = Number(card.due_date);
+                            if (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) {
+                                return `
+                                    <div class="rounded-xl border border-amber-200 bg-white/80 p-2.5 text-[11px] dark:border-amber-800 dark:bg-slate-900/70">
+                                        <div class="font-bold text-slate-800 dark:text-slate-100">${escapeHtml(card.account_name)} · ยอดค้าง ฿${outstanding.toLocaleString()}</div>
+                                        <div class="mt-0.5 text-[9px] text-amber-700 dark:text-amber-300">ยังไม่ได้ตั้งวันครบกำหนดชำระ</div>
+                                        <button onclick="switchTab('accounts')" class="mt-2 rounded-lg bg-amber-100 px-2.5 py-1.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">ไปตั้งค่าวันครบกำหนด</button>
+                                    </div>
+                                `;
+                            }
+
+                            let dueDate = new Date(today.getFullYear(), today.getMonth(), Math.min(dueDay, new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()));
+                            if (dueDate < today) {
+                                const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+                                dueDate = new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(dueDay, new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate()));
+                            }
+                            const daysUntilDue = Math.round((Date.UTC(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate()) - Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000);
+                            const reminderText = daysUntilDue === 0 ? 'ครบกำหนดชำระวันนี้' : `ครบกำหนดในอีก ${daysUntilDue} วัน`;
+                            const dueDateLabel = dueDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+                            return `
+                                <div class="rounded-xl border border-amber-200 bg-white/80 p-2.5 text-[11px] dark:border-amber-800 dark:bg-slate-900/70">
+                                    <div class="font-bold text-slate-800 dark:text-slate-100">${escapeHtml(card.account_name)} · ${reminderText}</div>
+                                    <div class="mt-0.5 text-[9px] text-amber-700 dark:text-amber-300">กำหนด ${dueDateLabel} · ยอดค้างชำระ ฿${outstanding.toLocaleString()}</div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </section>
+            ` : '';
 
             const groupDefinitions = [
                 { type: 'cash', title: 'เงินสด', icon: 'wallet', color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-950/30' },
@@ -790,11 +820,9 @@
                 { type: 'investment', title: 'การลงทุน', icon: 'trending-up', color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-950/30' },
                 { type: 'loan', title: 'หนี้สิน', icon: 'file-text', color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-950/30' }
             ];
-            const quickCategories = db.categories.filter(category => category.category_type === 'expense').slice(0, 4);
 
             container.innerHTML = `
                 <div class="space-y-4 animate-in fade-in duration-200">
-                    ${alertHtml}
                     ${renderDateFilterBar()}
 
                     <!-- Net Worth Card -->
@@ -831,23 +859,7 @@
                         </div>
                     </div>
 
-                    <!-- Quick expense shortcuts -->
-                    <section class="space-y-2">
-                        <div class="flex items-center justify-between px-1">
-                            <h3 class="font-bold text-xs text-slate-500 uppercase tracking-wider">ทำรายการลัด</h3>
-                            <span class="text-[10px] text-slate-400">แตะเพื่อบันทึกรายจ่าย</span>
-                        </div>
-                        <div class="grid grid-cols-2 gap-2.5">
-                            ${quickCategories.map(category => `
-                                <button onclick="openQuickTransaction('${category.id}')" class="bg-white dark:bg-slate-800 p-3.5 rounded-3xl border border-slate-200/80 dark:border-slate-700 shadow-sm flex items-center gap-3 text-left hover:border-blue-300 transition">
-                                    <span class="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0" style="background-color: ${category.color || '#dbeafe'}20; color: ${category.color || '#2563eb'}">
-                                        <i data-lucide="${category.icon || 'tag'}" class="w-5 h-5"></i>
-                                    </span>
-                                    <span class="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate">${escapeHtml(category.category_name)}</span>
-                                </button>
-                            `).join('') || '<div class="col-span-2 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700 p-4 text-center text-xs text-slate-400">เพิ่มหมวดหมู่รายจ่ายเพื่อสร้างรายการลัด</div>'}
-                        </div>
-                    </section>
+                    ${alertHtml}
 
                     <!-- Compact Overview -->
                     <div>
@@ -919,15 +931,19 @@
             document.getElementById('subAccountTitle').innerHTML = `<i data-lucide="wallet" class="w-4 h-4 text-emerald-500"></i> ${title} (${matchingAccounts.length} บัญชี)`;
             
             document.getElementById('subAccountContent').className = 'grid grid-cols-2 gap-2.5';
-            document.getElementById('subAccountContent').innerHTML = matchingAccounts.map(acc => `
-                <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2 min-w-0">
-                    <div class="min-w-0">
-                        <div class="font-bold text-xs text-slate-900 dark:text-white truncate">${acc.account_name}</div>
-                        <div class="text-[10px] text-slate-400">${['credit', 'loan'].includes(acc.account_type) ? 'ยอดหนี้' : 'คงเหลือ'}: ฿${(['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : Number(acc.balance)).toLocaleString()}</div>
+            document.getElementById('subAccountContent').innerHTML = matchingAccounts.map(acc => {
+                const note = getSummaryNote(acc.id);
+                return `
+                    <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2 min-w-0">
+                        <div class="min-w-0">
+                            <div class="font-bold text-xs text-slate-900 dark:text-white truncate">${escapeHtml(acc.account_name)}</div>
+                            <div class="text-[10px] text-slate-400">${['credit', 'loan'].includes(acc.account_type) ? 'ยอดหนี้' : 'คงเหลือ'}: ฿${(['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : Number(acc.balance)).toLocaleString()}</div>
+                            ${note.trim() ? `<p class="mt-1.5 rounded-lg bg-white dark:bg-slate-800 px-2 py-1.5 text-[10px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-words">${escapeHtml(note)}</p>` : ''}
+                        </div>
+                        <button onclick="closeSubAccountModal(); openAccountLedger('${acc.id}')" class="w-full px-2 py-1.5 bg-emerald-600 text-white rounded-xl text-[11px] font-semibold">ดูสมุดบัญชี</button>
                     </div>
-                    <button onclick="closeSubAccountModal(); openAccountLedger('${acc.id}')" class="w-full px-2 py-1.5 bg-emerald-600 text-white rounded-xl text-[11px] font-semibold">ดูสมุดบัญชี</button>
-                </div>
-            `).join('') || '<div class="col-span-2 text-center py-4 text-xs text-slate-400">ไม่มีบัญชีในประเภทนี้</div>';
+                `;
+            }).join('') || '<div class="col-span-2 text-center py-4 text-xs text-slate-400">ไม่มีบัญชีในประเภทนี้</div>';
 
             document.getElementById('subAccountModal').classList.remove('hidden');
             lucide.createIcons();
@@ -1018,16 +1034,6 @@
                             <span class="text-slate-500">โอนเงิน (ไม่นับเป็นรายรับ/รายจ่าย)</span>
                             <span class="font-semibold text-amber-600">ออก ฿${transferOut.toLocaleString()} · เข้า ฿${transferIn.toLocaleString()}</span>
                         </div>
-                    </div>
-
-                    <div class="flex justify-between items-center px-1">
-                        <div>
-                            <h2 class="text-sm font-bold">บันทึกรายการ (Transactions)</h2>
-                            <p class="text-[10px] text-slate-400">เงินสด โอน บัตรเครดิต พร้อมโน้ตและเวลา</p>
-                        </div>
-                        <button onclick="openTransactionModal()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
-                            <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่ม
-                        </button>
                     </div>
 
                     <div class="bg-white dark:bg-slate-800 rounded-3xl border border-slate-200/80 dark:border-slate-700 p-2 shadow-sm divide-y divide-slate-100 dark:divide-slate-700/50">
