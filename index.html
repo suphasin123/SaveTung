@@ -116,6 +116,62 @@
         [class~="text-xs"] { font-size: 14px !important; }
         .text-slate-400 { color: #64748b !important; }
         .dark .text-slate-400 { color: #a8b7cb !important; }
+        .account-select-option { background-color: #ffffff; color: #334155; }
+        .dark .account-select-option { background-color: #273449; color: #e2e8f0; }
+        .account-picker-source { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+        .account-picker-menu { scrollbar-width: thin; }
+        @media (max-width: 639px) {
+            .account-picker-backdrop {
+                position: fixed;
+                inset: 0;
+                z-index: 99;
+                background: rgba(15, 23, 42, 0.58);
+                backdrop-filter: blur(3px);
+            }
+            .account-picker-menu.account-picker-fullscreen {
+                position: fixed !important;
+                inset: 50% auto auto 50% !important;
+                z-index: 100 !important;
+                width: min(92vw, 480px) !important;
+                max-height: 84vh !important;
+                max-height: 84dvh !important;
+                margin: 0 !important;
+                overflow-y: auto;
+                border-radius: 1.5rem !important;
+                padding: 1rem;
+                transform: translate(-50%, -50%);
+                box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+            }
+            .account-picker-menu .account-picker-heading {
+                font-size: 1rem !important;
+                line-height: 1.5rem;
+                padding: 0.75rem 1rem;
+            }
+        }
+        .account-picker-menu .account-picker-heading {
+            font-size: 0.95rem;
+            line-height: 1.4rem;
+            padding: 0.7rem 0.9rem;
+        }
+        .account-picker-menu .account-picker-topbar { display: none; }
+        @media (max-width: 639px) {
+            .account-picker-menu .account-picker-topbar {
+                display: flex;
+                position: sticky;
+                top: -1rem;
+                z-index: 2;
+                align-items: center;
+                justify-content: space-between;
+                margin: -1rem -1rem 1rem;
+                padding: 1rem;
+                background: #ffffff;
+                border-bottom: 1px solid #e3e8f0;
+            }
+            .dark .account-picker-menu .account-picker-topbar {
+                background: #1e293b;
+                border-color: #3b4b63;
+            }
+        }
     </style>
 </head>
 <body class="h-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100">
@@ -258,6 +314,14 @@
             <form onsubmit="handleSaveTransaction(event)" class="space-y-3.5">
                 <input type="hidden" id="editTxId">
                 <div>
+                    <label class="block text-[11px] font-medium mb-1" id="txWalletLabel">กระเป๋าเงินต้นทาง</label>
+                    <select id="txWalletId" required class="account-picker-source" aria-hidden="true" tabindex="-1"></select>
+                </div>
+                <div id="toWalletContainer" class="hidden">
+                    <label class="block text-[11px] font-medium mb-1" id="txToWalletLabel">บัญชีปลายทาง</label>
+                    <select id="txToWalletId" class="account-picker-source" aria-hidden="true" tabindex="-1"></select>
+                </div>
+                <div>
                     <label class="block text-[11px] font-medium mb-1">ประเภทรายการ</label>
                     <select id="txType" onchange="onTxTypeChange()" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs">
                         <option value="expense">รายจ่าย (Expense)</option>
@@ -276,14 +340,6 @@
                         <label class="block text-[11px] font-medium mb-1">วันและเวลา</label>
                         <input type="datetime-local" id="txDate" required class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-[10px]">
                     </div>
-                </div>
-                <div>
-                    <label class="block text-[11px] font-medium mb-1" id="txWalletLabel">กระเป๋าเงินต้นทาง</label>
-                    <select id="txWalletId" required class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs"></select>
-                </div>
-                <div id="toWalletContainer" class="hidden">
-                    <label class="block text-[11px] font-medium mb-1" id="txToWalletLabel">บัญชีปลายทาง</label>
-                    <select id="txToWalletId" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-xs"></select>
                 </div>
                 <div>
                     <label class="block text-[11px] font-medium mb-1">หมวดหมู่ (Category)</label>
@@ -368,6 +424,11 @@
 
         window.addEventListener('DOMContentLoaded', async () => {
             lucide.createIcons();
+            document.addEventListener('click', event => {
+                if (event.target.closest('.account-picker-menu') || event.target.closest('#txWalletIdPicker, #txToWalletIdPicker')) return;
+                closeAccountPicker('txWalletId');
+                closeAccountPicker('txToWalletId');
+            });
             window.addEventListener('online', () => setSyncStatus('online'));
             window.addEventListener('offline', () => setSyncStatus('offline'));
             if (!navigator.onLine) setSyncStatus('offline');
@@ -1341,14 +1402,23 @@
             document.getElementById('subAccountContent').className = 'grid grid-cols-2 gap-2.5';
             document.getElementById('subAccountContent').innerHTML = matchingAccounts.map(acc => {
                 const note = getSummaryNote(acc.id);
+                const isLiability = ['credit', 'loan'].includes(acc.account_type);
+                const balance = isLiability ? Math.abs(Number(acc.balance)) : Number(acc.balance);
+                const accountTheme = {
+                    cash: 'border-emerald-200 bg-emerald-50/60 shadow-emerald-900/5 dark:border-emerald-800 dark:bg-emerald-950/20',
+                    bank: 'border-blue-200 bg-blue-50/60 shadow-blue-900/5 dark:border-blue-800 dark:bg-blue-950/20',
+                    credit: 'border-indigo-200 bg-indigo-50/60 shadow-indigo-900/5 dark:border-indigo-800 dark:bg-indigo-950/20',
+                    investment: 'border-amber-200 bg-amber-50/60 shadow-amber-900/5 dark:border-amber-800 dark:bg-amber-950/20',
+                    loan: 'border-rose-200 bg-rose-50/60 shadow-rose-900/5 dark:border-rose-800 dark:bg-rose-950/20'
+                }[acc.account_type] || 'border-slate-200 bg-slate-50 shadow-slate-900/5 dark:border-slate-700 dark:bg-slate-900';
                 return `
-                    <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center gap-2 min-w-0">
-                        <div class="min-w-0 flex-1">
-                            <div class="font-bold text-xs text-slate-900 dark:text-white whitespace-normal break-words">${escapeHtml(acc.account_name)}</div>
-                            <div class="text-[10px] text-slate-400">${['credit', 'loan'].includes(acc.account_type) ? 'ยอดหนี้' : 'คงเหลือ'}: ${(['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : Number(acc.balance)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                            ${note.trim() ? `<p class="mt-1.5 rounded-lg bg-white dark:bg-slate-800 px-2 py-1.5 text-[10px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-words">${escapeHtml(note)}</p>` : ''}
+                    <div onclick="closeSubAccountModal(); openAccountLedger('${acc.id}')" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); closeSubAccountModal(); openAccountLedger('${acc.id}'); }" role="button" tabindex="0" class="${accountTheme} min-w-0 cursor-pointer rounded-2xl border p-3 shadow-md transition hover:-translate-y-0.5 hover:shadow-lg">
+                        <div class="font-bold text-xs text-slate-900 dark:text-white whitespace-normal break-words">${escapeHtml(acc.account_name)}</div>
+                        <div class="mt-1.5 flex items-center justify-between gap-2 rounded-xl border border-white/80 bg-white/80 px-2.5 py-2 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
+                            <div class="text-[10px] font-medium text-slate-500 dark:text-slate-400">${isLiability ? 'ยอดหนี้' : 'ยอดคงเหลือ'}</div>
+                            <div class="text-base font-bold tracking-tight ${isLiability ? 'text-rose-600 dark:text-rose-300' : 'text-blue-700 dark:text-blue-300'}">${balance.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                         </div>
-                        <button onclick="closeSubAccountModal(); openAccountLedger('${acc.id}')" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white" title="ดูสมุดบัญชี" aria-label="ดูสมุดบัญชี"><i data-lucide="book-open" class="h-4 w-4"></i></button>
+                        ${note.trim() ? `<p class="mt-2 rounded-lg bg-white/80 px-2 py-1.5 text-[10px] leading-relaxed text-slate-600 whitespace-pre-wrap break-words shadow-sm dark:bg-slate-900/70 dark:text-slate-300">${escapeHtml(note)}</p>` : ''}
                     </div>
                 `;
             }).join('') || '<div class="col-span-2 text-center py-4 text-xs text-slate-400">ไม่มีบัญชีในประเภทนี้</div>';
@@ -1605,6 +1675,8 @@
                     document.getElementById('txWalletId').value = tx.wallet_id;
                     document.getElementById('txToWalletId').value = tx.to_wallet_id || '';
                     document.getElementById('txCategoryId').value = tx.category_id;
+                    refreshAccountPicker(document.getElementById('txWalletId'));
+                    refreshAccountPicker(document.getElementById('txToWalletId'));
                 }
             } else {
                 document.getElementById('editTxId').value = '';
@@ -1629,6 +1701,120 @@
             document.getElementById('txNote').value = category.category_name;
         }
 
+        function getAccountPickerTheme(label) {
+            const themes = {
+                'เงินสด': 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200',
+                'เงินฝากธนาคาร': 'bg-blue-50 text-blue-800 dark:bg-blue-950/50 dark:text-blue-200',
+                'บัตรเครดิต': 'bg-violet-50 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200',
+                'การลงทุน': 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200',
+                'หนี้สิน': 'bg-rose-50 text-rose-800 dark:bg-rose-950/50 dark:text-rose-200'
+            };
+            return themes[label] || 'bg-slate-50 text-slate-700 dark:bg-slate-700 dark:text-slate-200';
+        }
+
+        function refreshAccountPicker(select) {
+            if (!select) return;
+            let picker = document.getElementById(`${select.id}Picker`);
+            if (!picker) {
+                picker = document.createElement('div');
+                picker.id = `${select.id}Picker`;
+                picker.className = 'relative mt-1';
+                select.insertAdjacentElement('afterend', picker);
+            }
+
+            const groups = [];
+            Array.from(select.options).forEach(option => {
+                const groupName = option.parentElement.tagName === 'OPTGROUP' ? option.parentElement.label : 'บัญชี';
+                let group = groups.find(item => item.name === groupName);
+                if (!group) {
+                    group = { name: groupName, options: [] };
+                    groups.push(group);
+                }
+                group.options.push(option);
+            });
+
+            const selected = Array.from(select.options).find(option => option.value === select.value);
+            const selectedLabel = selected ? selected.textContent : 'เลือกกระเป๋าเงิน';
+            picker.innerHTML = `
+                <button type="button" onclick="toggleAccountPicker('${select.id}')" aria-haspopup="listbox" aria-expanded="false" class="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-left text-xs shadow-sm transition hover:border-blue-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-600 dark:bg-slate-900 dark:hover:border-blue-500 dark:focus:ring-blue-900">
+                    <span class="flex min-w-0 items-center gap-2.5"><span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><i data-lucide="wallet-cards" class="h-4 w-4"></i></span><span class="truncate font-semibold text-slate-700 dark:text-slate-200">${escapeHtml(selectedLabel)}</span></span>
+                    <i data-lucide="chevron-down" class="h-4 w-4 shrink-0 text-slate-400 transition-transform"></i>
+                </button>
+                <div id="${select.id}PickerMenu" role="listbox" class="account-picker-menu account-picker-fullscreen absolute left-0 right-0 top-full z-50 mt-2 hidden max-h-64 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-slate-800">
+                    <div class="account-picker-topbar">
+                        <span class="text-base font-bold text-slate-800 dark:text-white">เลือกกระเป๋าเงิน</span>
+                        <button type="button" onclick="closeAccountPicker('${select.id}')" class="rounded-xl p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700" aria-label="ปิดหน้าต่างเลือกบัญชี"><i data-lucide="x" class="h-5 w-5"></i></button>
+                    </div>
+                    ${groups.map(group => `
+                        <div class="mb-1.5 overflow-hidden rounded-xl last:mb-0">
+                            <div class="account-picker-heading ${getAccountPickerTheme(group.name)} flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold tracking-wide"><span class="h-2 w-2 rounded-full bg-current opacity-70"></span>${escapeHtml(group.name)}</div>
+                            <div class="mt-1 space-y-0.5">${group.options.map(option => `
+                                <button type="button" role="option" aria-selected="${option.value === select.value}" onclick="chooseAccountPicker('${select.id}', '${escapeHtml(option.value)}')" class="flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs transition hover:bg-slate-50 focus:bg-slate-50 focus:outline-none dark:hover:bg-slate-700/70 dark:focus:bg-slate-700/70 ${option.value === select.value ? 'font-semibold text-blue-700 dark:text-blue-300' : 'text-slate-700 dark:text-slate-200'}"><span class="truncate">${escapeHtml(option.textContent)}</span>${option.value === select.value ? '<i data-lucide="check" class="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-300"></i>' : ''}</button>
+                            `).join('')}</div>
+                        </div>
+                    `).join('') || '<div class="px-3 py-4 text-center text-xs text-slate-400">ยังไม่มีบัญชีประเภทนี้</div>'}
+                </div>
+            `;
+            if (window.lucide) lucide.createIcons();
+        }
+
+        function toggleAccountPicker(selectId) {
+            const menu = document.getElementById(`${selectId}PickerMenu`);
+            const picker = document.getElementById(`${selectId}Picker`);
+            if (!menu || !picker) return;
+            document.querySelectorAll('.account-picker-menu').forEach(otherMenu => {
+                if (otherMenu !== menu) closeAccountPicker(otherMenu.id.replace('PickerMenu', ''));
+            });
+            const isOpening = menu.classList.contains('hidden');
+            const viewportWidth = Math.min(window.innerWidth, window.screen?.width || window.innerWidth);
+            if (isOpening && viewportWidth <= 639) {
+                menu._pickerParent = picker;
+                const backdrop = document.createElement('div');
+                backdrop.className = 'account-picker-backdrop';
+                backdrop.addEventListener('click', () => closeAccountPicker(selectId));
+                document.body.appendChild(backdrop);
+                document.body.appendChild(menu);
+                Object.assign(menu.style, {
+                    position: 'fixed',
+                    left: '50%',
+                    top: '50%',
+                    right: 'auto',
+                    bottom: 'auto',
+                    width: 'min(92vw, 480px)',
+                    maxHeight: '84dvh',
+                    margin: '0',
+                    overflowY: 'auto',
+                    borderRadius: '24px',
+                    padding: '16px',
+                    transform: 'translate(-50%, -50%)',
+                    zIndex: '100',
+                    boxShadow: '0 24px 70px rgba(15, 23, 42, 0.28)'
+                });
+            }
+            menu.classList.toggle('hidden', !isOpening);
+            picker.querySelector('button')?.setAttribute('aria-expanded', String(isOpening));
+        }
+
+        function closeAccountPicker(selectId) {
+            const menu = document.getElementById(`${selectId}PickerMenu`);
+            menu?.classList.add('hidden');
+            document.querySelector('.account-picker-backdrop')?.remove();
+            if (menu?._pickerParent?.isConnected) {
+                menu._pickerParent.appendChild(menu);
+                menu.style.cssText = '';
+                delete menu._pickerParent;
+            }
+            document.getElementById(`${selectId}Picker`)?.querySelector('button')?.setAttribute('aria-expanded', 'false');
+        }
+
+        function chooseAccountPicker(selectId, value) {
+            const select = document.getElementById(selectId);
+            if (!select) return;
+            select.value = value;
+            closeAccountPicker(selectId);
+            refreshAccountPicker(select);
+        }
+
         function onTxTypeChange() {
             const type = document.getElementById('txType').value;
             const walletSelect = document.getElementById('txWalletId');
@@ -1645,41 +1831,63 @@
             const creditAccounts = db.accounts.filter(a => a.account_type === 'credit');
             const nonCreditAccounts = db.accounts.filter(a => a.account_type !== 'credit');
             const allAccounts = db.accounts;
+            const accountTypeLabels = {
+                cash: 'เงินสด',
+                bank: 'เงินฝากธนาคาร',
+                credit: 'บัตรเครดิต',
+                investment: 'การลงทุน',
+                loan: 'หนี้สิน'
+            };
+            const accountTypeHeaderColors = {
+                cash: '#dcfce7',
+                bank: '#dbeafe',
+                credit: '#ede9fe',
+                investment: '#fef3c7',
+                loan: '#ffe4e6'
+            };
+            const renderAccountOptions = accounts => ['cash', 'bank', 'credit', 'investment', 'loan']
+                .map(accountType => {
+                    const matchingAccounts = accounts.filter(account => account.account_type === accountType);
+                    if (!matchingAccounts.length) return '';
+                    return `<optgroup label="${accountTypeLabels[accountType]}" style="background-color:${accountTypeHeaderColors[accountType]}; color:#334155; font-weight:700;">${matchingAccounts.map(account => `<option class="account-select-option" value="${account.id}">${escapeHtml(account.account_name)}</option>`).join('')}</optgroup>`;
+                }).join('');
 
             if (type === 'credit_spend') {
                 // รูดบัตร -> กระเป๋าหลักต้องเป็นบัตรเครดิตเท่านั้น
                 txWalletLabel.textContent = 'เลือกบัตรเครดิตที่รูด';
-                walletSelect.innerHTML = creditAccounts.map(a => `<option value="${a.id}">[บัตรเครดิต] ${a.account_name}</option>`).join('');
+                walletSelect.innerHTML = renderAccountOptions(creditAccounts);
                 toWalletContainer.classList.add('hidden');
                 installmentBox.classList.remove('hidden');
             } else if (type === 'credit_payment') {
                 // จ่ายบิลบัตร -> กระเป๋าหลักคือบัญชีที่จ่ายเงิน (ธนาคาร/เงินสด), บัญชีปลายทางคือบัตรเครดิต
                 txWalletLabel.textContent = 'จ่ายจากบัญชี (เงินสด/ธนาคาร)';
-                walletSelect.innerHTML = nonCreditAccounts.map(a => `<option value="${a.id}">[${a.account_type.toUpperCase()}] ${a.account_name}</option>`).join('');
+                walletSelect.innerHTML = renderAccountOptions(nonCreditAccounts);
                 
                 txToWalletLabel.textContent = 'ชำระเข้าบัตรเครดิตใบไหน';
-                toWalletSelect.innerHTML = creditAccounts.map(a => `<option value="${a.id}">[บัตรเครดิต] ${a.account_name}</option>`).join('');
+                toWalletSelect.innerHTML = renderAccountOptions(creditAccounts);
                 
                 toWalletContainer.classList.remove('hidden');
                 installmentBox.classList.add('hidden');
             } else if (type === 'transfer') {
                 txWalletLabel.textContent = 'บัญชีต้นทาง';
-                walletSelect.innerHTML = allAccounts.map(a => `<option value="${a.id}">[${a.account_type.toUpperCase()}] ${a.account_name}</option>`).join('');
+                walletSelect.innerHTML = renderAccountOptions(allAccounts);
                 
                 txToWalletLabel.textContent = 'บัญชีปลายทาง';
-                toWalletSelect.innerHTML = allAccounts.map(a => `<option value="${a.id}">[${a.account_type.toUpperCase()}] ${a.account_name}</option>`).join('');
+                toWalletSelect.innerHTML = renderAccountOptions(allAccounts);
                 
                 toWalletContainer.classList.remove('hidden');
                 installmentBox.classList.add('hidden');
             } else {
                 // expense / income
                 txWalletLabel.textContent = 'กระเป๋าเงิน / บัญชี';
-                walletSelect.innerHTML = allAccounts.map(a => `<option value="${a.id}">[${a.account_type.toUpperCase()}] ${a.account_name}</option>`).join('');
+                walletSelect.innerHTML = renderAccountOptions(allAccounts);
                 toWalletContainer.classList.add('hidden');
                 installmentBox.classList.add('hidden');
             }
 
             categorySelect.innerHTML = db.categories.map(c => `<option value="${c.id}">${c.category_name} (${c.category_type})</option>`).join('');
+            refreshAccountPicker(walletSelect);
+            refreshAccountPicker(toWalletSelect);
         }
 
         function toggleInstallmentFields() {
@@ -2595,7 +2803,7 @@
                                     <button onclick="cancelOrderedListReorder('savings_goals')" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">ยกเลิก</button>
                                 ` : `
                                     <button onclick="savingsGoalReorderMode = true; renderCurrentTab()" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">จัดเรียง</button>
-                                    <button onclick="openGoalModal()" class="bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md shadow-fuchsia-600/20">
+                                    <button onclick="openGoalModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md shadow-blue-600/20">
                                         <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มเป้าหมาย
                                     </button>
                                 `}
