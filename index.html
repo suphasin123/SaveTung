@@ -68,6 +68,7 @@
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .account-item:has(details[open]) { z-index: 40; }
 
         /* Soft neutral surfaces with a navy-and-blue primary palette. */
         body { background-color: #f1f4f8; }
@@ -325,6 +326,11 @@
         let analyticsCategoryId = '';
         let expandedAccountType = '';
         let creditRemindersExpanded = false;
+        let categoryReorderMode = false;
+        let draggedCategoryId = null;
+        let accountReorderMode = false;
+        let draggedAccountId = null;
+        let touchDraggedAccountId = null;
 
         let globalFilter = {
             mode: 'month',
@@ -470,6 +476,14 @@
         // ==========================================
         // DIRECT SUPABASE DATABASE OPERATIONS
         // ==========================================
+        function sortByOrderIndex(items) {
+            return items.slice().sort((a, b) => {
+                const aOrder = a.order_index != null && Number.isFinite(Number(a.order_index)) ? Number(a.order_index) : Number.MAX_SAFE_INTEGER;
+                const bOrder = b.order_index != null && Number.isFinite(Number(b.order_index)) ? Number(b.order_index) : Number.MAX_SAFE_INTEGER;
+                return aOrder - bOrder || new Date(a.created_at || 0) - new Date(b.created_at || 0);
+            });
+        }
+
         async function loadAllData() {
             if (!currentUser) return;
             try {
@@ -495,10 +509,10 @@
                     const bOrder = b.order_index != null && Number.isFinite(Number(b.order_index)) ? Number(b.order_index) : Number.MAX_SAFE_INTEGER;
                     return aOrder - bOrder || new Date(a.created_at || 0) - new Date(b.created_at || 0);
                 });
-                db.categories = cat.data || [];
-                db.budgets = bud.data || [];
+                db.categories = sortByOrderIndex(cat.data || []);
+                db.budgets = sortByOrderIndex(bud.data || []);
                 db.transactions = tx.data || [];
-                db.savings_goals = goal.data || [];
+                db.savings_goals = sortByOrderIndex(goal.data || []);
                 db.summary_notes = Object.fromEntries(db.accounts.map(account => [String(account.id), account.note || '']));
 
                 // Migrate notes previously stored only in this browser into the accounts table.
@@ -588,7 +602,7 @@
             return true;
         }
 
-        async function moveItemOrder(tableName, id, direction) {
+        async function reorderItemToPosition(tableName, id, targetIdx) {
             if (!currentUser || !Array.isArray(db[tableName])) return;
             const allItems = db[tableName];
             const item = allItems.find(entry => String(entry.id) === String(id));
@@ -596,20 +610,19 @@
 
             const list = tableName === 'accounts'
                 ? allItems.filter(entry => entry.account_type === item.account_type)
-                : allItems;
-            const idx = list.findIndex(entry => String(entry.id) === String(id));
-            const targetIdx = idx + direction;
-            if (targetIdx < 0 || targetIdx >= list.length) return;
+                : allItems.slice();
+            const currentIdx = list.findIndex(entry => String(entry.id) === String(id));
+            if (targetIdx < 0 || targetIdx >= list.length || currentIdx === targetIdx) return;
 
-            [list[idx], list[targetIdx]] = [list[targetIdx], list[idx]];
+            const [movedItem] = list.splice(currentIdx, 1);
+            list.splice(targetIdx, 0, movedItem);
             list.forEach((entry, index) => { entry.order_index = index; });
 
             if (tableName === 'accounts') {
                 const groupIds = new Set(list.map(entry => String(entry.id)));
-                const reordered = list.slice();
                 let nextIndex = 0;
                 for (let index = 0; index < allItems.length; index++) {
-                    if (groupIds.has(String(allItems[index].id))) allItems[index] = reordered[nextIndex++];
+                    if (groupIds.has(String(allItems[index].id))) allItems[index] = list[nextIndex++];
                 }
             } else {
                 allItems.splice(0, allItems.length, ...list);
@@ -628,6 +641,127 @@
             }
             renderCurrentTab();
             showAlert('จัดลำดับสำเร็จ');
+        }
+
+        async function moveItemOrder(tableName, id, direction) {
+            const allItems = db[tableName];
+            const item = allItems?.find(entry => String(entry.id) === String(id));
+            if (!item) return;
+            const list = tableName === 'accounts'
+                ? allItems.filter(entry => entry.account_type === item.account_type)
+                : allItems;
+            const currentIdx = list.findIndex(entry => String(entry.id) === String(id));
+            await reorderItemToPosition(tableName, id, currentIdx + direction);
+        }
+
+        function moveAccountInMemory(sourceId, targetId, insertAfter) {
+            const allItems = db.accounts;
+            const source = allItems.find(item => String(item.id) === String(sourceId));
+            const target = allItems.find(item => String(item.id) === String(targetId));
+            if (!source || !target || source.account_type !== target.account_type || sourceId === targetId) return;
+
+            const group = allItems.filter(item => item.account_type === source.account_type);
+            const [moved] = group.splice(group.findIndex(item => String(item.id) === String(sourceId)), 1);
+            const targetIndex = group.findIndex(item => String(item.id) === String(targetId));
+            group.splice(targetIndex + (insertAfter ? 1 : 0), 0, moved);
+
+            const groupIds = new Set(group.map(item => String(item.id)));
+            let nextIndex = 0;
+            for (let index = 0; index < allItems.length; index++) {
+                if (groupIds.has(String(allItems[index].id))) allItems[index] = group[nextIndex++];
+            }
+        }
+
+        function startAccountDrag(event, accountId) {
+            if (!accountReorderMode) {
+                event.preventDefault();
+                return;
+            }
+            draggedAccountId = String(accountId);
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', draggedAccountId);
+        }
+
+        function dropAccountBefore(event, targetId) {
+            event.preventDefault();
+            if (!accountReorderMode) return;
+            const sourceId = draggedAccountId || event.dataTransfer.getData('text/plain');
+            const target = event.currentTarget;
+            const insertAfter = event.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+            moveAccountInMemory(String(sourceId), String(targetId), insertAfter);
+            renderCurrentTab();
+        }
+
+        function startAccountTouch(event, accountId) {
+            if (!accountReorderMode || event.touches.length !== 1) return;
+            touchDraggedAccountId = String(accountId);
+            event.preventDefault();
+            event.currentTarget.classList.add('opacity-60', 'ring-2', 'ring-blue-400');
+        }
+
+        function moveAccountTouch(event) {
+            if (!accountReorderMode || !touchDraggedAccountId || !event.touches.length) return;
+            event.preventDefault();
+            const touch = event.touches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('[data-account-id]');
+            if (!target || target.dataset.accountId === touchDraggedAccountId) return;
+            const source = db.accounts.find(item => String(item.id) === touchDraggedAccountId);
+            const targetAccount = db.accounts.find(item => String(item.id) === target.dataset.accountId);
+            if (!source || !targetAccount || source.account_type !== targetAccount.account_type) return;
+
+            const insertAfter = touch.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+            moveAccountInMemory(touchDraggedAccountId, target.dataset.accountId, insertAfter);
+            const list = document.getElementById(`accountList-${source.account_type}`);
+            if (!list) return;
+            db.accounts.filter(item => item.account_type === source.account_type).forEach((item, index) => {
+                const card = list.querySelector(`[data-account-id="${item.id}"]`);
+                if (!card) return;
+                list.appendChild(card);
+                const number = card.querySelector('.account-order-number');
+                if (number) number.textContent = index + 1;
+            });
+        }
+
+        function endAccountTouch(event) {
+            if (!touchDraggedAccountId) return;
+            document.querySelectorAll('[data-account-id]').forEach(card => card.classList.remove('opacity-60', 'ring-2', 'ring-blue-400'));
+            touchDraggedAccountId = null;
+            if (event) event.preventDefault();
+        }
+
+        async function saveAccountOrder() {
+            if (!currentUser) {
+                showAlert('กรุณาเข้าสู่ระบบก่อนบันทึกลำดับ', 'error');
+                return;
+            }
+            const results = await Promise.all(db.accounts.map((account, index, accounts) => {
+                const groupIndex = accounts.filter(item => item.account_type === account.account_type)
+                    .findIndex(item => String(item.id) === String(account.id));
+                return supabaseClient.from('accounts').update({ order_index: groupIndex })
+                    .eq('id', account.id).eq('user_id', currentUser.id);
+            }));
+            const failed = results.find(result => result.error);
+            if (failed) {
+                showAlert('บันทึกลำดับไม่สำเร็จ: ' + failed.error.message, 'error');
+                await loadAllData();
+                renderCurrentTab();
+                return;
+            }
+            db.accounts.forEach(account => {
+                account.order_index = db.accounts.filter(item => item.account_type === account.account_type)
+                    .findIndex(item => String(item.id) === String(account.id));
+            });
+            accountReorderMode = false;
+            draggedAccountId = null;
+            await loadAllData();
+            renderCurrentTab();
+            showAlert('บันทึกลำดับบัญชีสำเร็จ');
+        }
+
+        function cancelAccountReorder() {
+            accountReorderMode = false;
+            draggedAccountId = null;
+            loadAllData().then(renderCurrentTab);
         }
 
         // ==========================================
@@ -1491,11 +1625,19 @@
                     <div class="flex justify-between items-center px-1">
                         <div>
                             <h2 class="text-sm font-bold">กระเป๋าเงิน & บัตรเครดิต (Accounts)</h2>
-                            <p class="text-[10px] text-slate-400">แสดงรวมตามประเภท คลิกเพื่อดูรายการย่อย</p>
+                            <p class="text-[10px] text-slate-400">${accountReorderMode ? 'เปิดประเภทบัญชี แล้วลากรายการเพื่อจัดลำดับ' : 'แสดงรวมตามประเภท คลิกเพื่อดูรายการย่อย'}</p>
                         </div>
-                        <button onclick="openAccountModal()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
-                            <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มบัญชี
-                        </button>
+                        <div class="flex items-center gap-1.5">
+                            ${accountReorderMode ? `
+                                <button onclick="saveAccountOrder()" class="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-md">บันทึกลำดับ</button>
+                                <button onclick="cancelAccountReorder()" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">ยกเลิก</button>
+                            ` : `
+                                <button onclick="accountReorderMode = true; renderCurrentTab()" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">จัดเรียง</button>
+                                <button onclick="openAccountModal()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มบัญชี
+                                </button>
+                            `}
+                        </div>
                     </div>
 
                     <!-- Net worth summary -->
@@ -1528,7 +1670,7 @@
                                         <i data-lucide="chevron-${isExpanded ? 'up' : 'down'}" class="h-4 w-4 shrink-0 text-slate-400"></i>
                                     </button>
                                     ${isExpanded ? `
-                                                                                <div class="space-y-2.5 border-t border-slate-100 px-3 py-3 dark:border-slate-700 sm:px-4">
+                                                                                <div id="accountList-${group.type}" class="space-y-2.5 border-t border-slate-100 px-3 py-3 dark:border-slate-700 sm:px-4">
                                             ${matchingAccs.map((acc, index) => {
                                                 const isLiabilityAccount = ['credit', 'loan'].includes(acc.account_type);
                                                 const balance = isLiabilityAccount ? Math.abs(Number(acc.balance)) : Number(acc.balance);
@@ -1541,20 +1683,21 @@
                                                     loan: { card: 'border-rose-200 bg-rose-50/70 dark:border-rose-900/70 dark:bg-rose-950/25', badge: 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200', accent: 'bg-rose-500' }
                                                 }[acc.account_type] || { card: 'border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-900', badge: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200', accent: 'bg-slate-400' };
                                                 return `
-                                                    <div class="relative grid grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-x-2 gap-y-2 overflow-hidden rounded-2xl border ${accountTheme.card} px-3 py-3 shadow-[0_3px_10px_rgba(15,23,42,0.07),inset_0_1px_0_rgba(255,255,255,0.9)] transition-shadow hover:shadow-md dark:shadow-[0_3px_10px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.04)]">
+                                                    <div data-account-id="${acc.id}" draggable="${accountReorderMode}" ondragstart="startAccountDrag(event, '${acc.id}')" ondragover="event.preventDefault()" ondrop="dropAccountBefore(event, '${acc.id}')" ontouchstart="startAccountTouch(event, '${acc.id}')" ontouchmove="moveAccountTouch(event)" ontouchend="endAccountTouch(event)" ontouchcancel="endAccountTouch(event)" style="${accountReorderMode ? 'touch-action:none;' : ''}" class="account-item relative grid grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-x-2 gap-y-2 rounded-2xl border ${accountTheme.card} px-3 py-3 shadow-[0_3px_10px_rgba(15,23,42,0.07),inset_0_1px_0_rgba(255,255,255,0.9)] transition-shadow hover:shadow-md dark:shadow-[0_3px_10px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.04)]">
                                                         <span class="absolute inset-y-0 left-0 w-1 ${accountTheme.accent}"></span>
-                                                        <span class="min-w-0"><span class="block truncate text-sm font-bold text-slate-900 dark:text-slate-100">${escapeHtml(acc.account_name)}</span><span class="mt-1 inline-flex rounded-full ${accountTheme.badge} px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide">${acc.account_type}</span></span>
+                                                        <span class="min-w-0">${accountReorderMode ? `<span class="account-order-number mr-1 inline-flex h-6 w-6 items-center justify-center rounded-lg bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">${index + 1}</span>` : ''}<span class="block truncate text-sm font-bold text-slate-900 dark:text-slate-100">${escapeHtml(acc.account_name)}</span><span class="mt-1 inline-flex rounded-full ${accountTheme.badge} px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide">${acc.account_type}</span></span>
                                                         <span class="shrink-0 self-start pt-0.5 text-sm font-bold ${isLiabilityAccount ? 'text-rose-600 dark:text-rose-400' : 'text-blue-700 dark:text-blue-300'}">${balance.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                                        <details class="relative self-start">
-                                                            <summary class="list-none cursor-pointer rounded-lg p-1 text-slate-500 hover:bg-white hover:text-blue-600 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-blue-300"><i data-lucide="ellipsis" class="h-4 w-4"></i></summary>
-                                                            <div class="absolute right-0 top-full z-30 min-w-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
-                                                                <button onclick="openAccountLedger('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="book-open" class="h-3.5 w-3.5"></i> สมุดบัญชี</button>
-                                                                <button onclick="openAccountModal('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="edit-3" class="h-3.5 w-3.5"></i> แก้ไข</button>
-                                                                <button onclick="deleteAccount('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i> ลบบัญชี</button>
-                                                                ${index > 0 ? `<button onclick="moveItemOrder('accounts', '${acc.id}', -1)" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="chevron-up" class="h-3.5 w-3.5"></i> เลื่อนขึ้น</button>` : ''}
-                                                                ${index < matchingAccs.length - 1 ? `<button onclick="moveItemOrder('accounts', '${acc.id}', 1)" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="chevron-down" class="h-3.5 w-3.5"></i> เลื่อนลง</button>` : ''}
-                                                            </div>
-                                                        </details>
+                                                        ${accountReorderMode ? `<span class="self-start rounded-lg bg-blue-100 px-2 py-1 text-[9px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300">ลากเพื่อเรียง</span>` : `
+                                                                                                                            <details class="relative self-start" ontoggle="this.closest('.account-item').style.zIndex = this.open ? '40' : ''">
+
+                                                                <summary class="list-none cursor-pointer rounded-lg p-1 text-slate-500 hover:bg-white hover:text-blue-600 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-blue-300"><i data-lucide="ellipsis" class="h-4 w-4"></i></summary>
+                                                                <div class="absolute right-0 top-full z-30 min-w-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+                                                                    <button onclick="openAccountLedger('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="book-open" class="h-3.5 w-3.5"></i> สมุดบัญชี</button>
+                                                                    <button onclick="openAccountModal('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"><i data-lucide="edit-3" class="h-3.5 w-3.5"></i> แก้ไข</button>
+                                                                    <button onclick="deleteAccount('${acc.id}')" class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30"><i data-lucide="trash-2" class="h-3.5 w-3.5"></i> ลบบัญชี</button>
+                                                                </div>
+                                                            </details>
+                                                        `}
                                                         ${note ? `<span class="col-span-3 min-w-0 whitespace-pre-wrap break-words rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs leading-relaxed text-black shadow-inner dark:border-slate-500 dark:bg-white dark:text-black"> <span class="font-semibold text-black">โน้ต:</span> ${escapeHtml(note)}</span>` : ''}
                                                     </div>
                                                 `;
@@ -1772,37 +1915,147 @@
         }
         function closeAccountLedger() { document.getElementById('ledgerModal').classList.add('hidden'); }
 
+        function toggleCategoryReorderMode() {
+            categoryReorderMode = true;
+            draggedCategoryId = null;
+            renderCurrentTab();
+        }
+
+        async function cancelCategoryReorder() {
+            categoryReorderMode = false;
+            draggedCategoryId = null;
+            await loadAllData();
+            renderCurrentTab();
+        }
+
+        function startCategoryDrag(event, categoryId) {
+            if (!categoryReorderMode) {
+                event.preventDefault();
+                return;
+            }
+            draggedCategoryId = String(categoryId);
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', draggedCategoryId);
+        }
+
+        let touchDraggedCategoryId = null;
+
+        function startCategoryTouch(event, categoryId) {
+            if (!categoryReorderMode || event.touches.length !== 1) return;
+            touchDraggedCategoryId = String(categoryId);
+            event.preventDefault();
+            event.currentTarget.classList.add('opacity-60', 'ring-2', 'ring-blue-400');
+        }
+
+        function moveCategoryTouch(event) {
+            if (!categoryReorderMode || !touchDraggedCategoryId || !event.touches.length) return;
+            event.preventDefault();
+            const touch = event.touches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('[data-category-id]');
+            if (!target || target.dataset.categoryId === touchDraggedCategoryId) return;
+
+            const sourceIndex = db.categories.findIndex(category => String(category.id) === touchDraggedCategoryId);
+            const targetIndex = db.categories.findIndex(category => String(category.id) === target.dataset.categoryId);
+            if (sourceIndex < 0 || targetIndex < 0) return;
+
+            const insertAfter = touch.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+            const [category] = db.categories.splice(sourceIndex, 1);
+            const updatedTargetIndex = db.categories.findIndex(item => String(item.id) === target.dataset.categoryId);
+            db.categories.splice(updatedTargetIndex + (insertAfter ? 1 : 0), 0, category);
+
+            const list = document.getElementById('categoryList');
+            db.categories.forEach((item, index) => {
+                const card = list.querySelector(`[data-category-id="${item.id}"]`);
+                if (!card) return;
+                list.appendChild(card);
+                const number = card.querySelector('.category-order-number');
+                if (number) number.textContent = index + 1;
+            });
+        }
+
+        function endCategoryTouch(event) {
+            if (!touchDraggedCategoryId) return;
+            document.querySelectorAll('[data-category-id]').forEach(card => card.classList.remove('opacity-60', 'ring-2', 'ring-blue-400'));
+            touchDraggedCategoryId = null;
+            if (event) event.preventDefault();
+        }
+
+        function dropCategoryBefore(event, targetId) {
+            event.preventDefault();
+            if (!categoryReorderMode) return;
+            const sourceId = draggedCategoryId || event.dataTransfer.getData('text/plain');
+            const fromIndex = db.categories.findIndex(category => String(category.id) === String(sourceId));
+            const toIndex = db.categories.findIndex(category => String(category.id) === String(targetId));
+            if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+            const [category] = db.categories.splice(fromIndex, 1);
+            const insertIndex = db.categories.findIndex(item => String(item.id) === String(targetId));
+            db.categories.splice(insertIndex, 0, category);
+            renderCurrentTab();
+        }
+
+        async function saveCategoryOrder() {
+            if (!currentUser) {
+                showAlert('กรุณาเข้าสู่ระบบก่อนบันทึกลำดับ', 'error');
+                return;
+            }
+            const results = await Promise.all(db.categories.map((category, index) =>
+                supabaseClient.from('categories').update({ order_index: index })
+                    .eq('id', category.id).eq('user_id', currentUser.id)
+            ));
+            const failed = results.find(result => result.error);
+            if (failed) {
+                showAlert('บันทึกลำดับไม่สำเร็จ: ' + failed.error.message, 'error');
+                await loadAllData();
+                renderCurrentTab();
+                return;
+            }
+            db.categories.forEach((category, index) => { category.order_index = index; });
+            categoryReorderMode = false;
+            await loadAllData();
+            renderCurrentTab();
+            showAlert('บันทึกลำดับหมวดหมู่สำเร็จ');
+        }
+
         function renderCategories(container) {
             container.innerHTML = `
                 <div class="space-y-4 animate-in fade-in duration-200">
-                    <div class="flex justify-between items-center px-1">
+                    <div class="flex justify-between items-center gap-2 px-1">
                         <div>
                             <h2 class="text-sm font-bold">หมวดหมู่ (Categories)</h2>
-                            <p class="text-[10px] text-slate-400">จัดลำดับ เพิ่ม แก้ไข และลบหมวดหมู่การใช้จ่าย</p>
+                            <p class="text-[10px] text-slate-400">${categoryReorderMode ? 'ลากรายการเพื่อจัดลำดับ 1, 2, 3… แล้วกดบันทึก' : 'เพิ่ม แก้ไข ลบ หรือจัดเรียงหมวดหมู่'}</p>
                         </div>
-                        <button onclick="openCategoryModal()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
-                            <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มหมวดหมู่
-                        </button>
+                        <div class="flex shrink-0 items-center gap-1.5">
+                            ${categoryReorderMode ? `
+                                <button onclick="saveCategoryOrder()" class="bg-blue-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md">บันทึกลำดับ</button>
+                                <button onclick="cancelCategoryReorder()" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">ยกเลิก</button>
+                            ` : `
+                                <button onclick="toggleCategoryReorderMode()" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">จัดเรียง</button>
+                                <button onclick="openCategoryModal()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่ม
+                                </button>
+                            `}
+                        </div>
                     </div>
 
-                    <div class="grid grid-cols-1 gap-2.5">
+                    <div id="categoryList" class="grid grid-cols-1 gap-2.5">
                         ${db.categories.map((cat, index) => `
-                            <div class="bg-white dark:bg-slate-800 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-700 flex justify-between items-center shadow-sm">
-                                <div class="flex items-center space-x-3">
-                                    <div class="w-9 h-9 rounded-xl flex items-center justify-center text-white" style="background-color: ${cat.color || '#10b981'}">
+                            <div data-category-id="${cat.id}" draggable="${categoryReorderMode}" ondragstart="startCategoryDrag(event, '${cat.id}')" ondragover="event.preventDefault()" ondrop="dropCategoryBefore(event, '${cat.id}')" ontouchstart="startCategoryTouch(event, '${cat.id}')" ontouchmove="moveCategoryTouch(event)" ontouchend="endCategoryTouch(event)" ontouchcancel="endCategoryTouch(event)" style="${categoryReorderMode ? 'touch-action:none;' : ''}" class="bg-white dark:bg-slate-800 p-3.5 rounded-2xl border ${categoryReorderMode ? 'border-blue-200 cursor-grab active:cursor-grabbing' : 'border-slate-200/80 dark:border-slate-700'} flex justify-between items-center shadow-sm">
+                                <div class="flex items-center space-x-3 min-w-0">
+                                    ${categoryReorderMode ? `<span class="category-order-number flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-xs font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">${index + 1}</span>` : ''}
+                                    <div class="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0" style="background-color: ${cat.color || '#10b981'}">
                                         <i data-lucide="${cat.icon || 'tag'}" class="w-4 h-4"></i>
                                     </div>
-                                    <div>
-                                        <div class="font-bold text-xs text-slate-900 dark:text-white">${cat.category_name}</div>
+                                    <div class="min-w-0">
+                                        <div class="font-bold text-xs text-slate-900 dark:text-white truncate">${cat.category_name}</div>
                                         <span class="text-[9px] uppercase px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500">ประเภท: ${cat.category_type}</span>
                                     </div>
                                 </div>
-                                <div class="flex items-center space-x-1">
-                                    ${index > 0 ? `<button onclick="moveItemOrder('categories', '${cat.id}', -1)" class="text-slate-400 hover:text-emerald-500 p-1" title="เลื่อนขึ้น"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>` : ''}
-                                    ${index < db.categories.length - 1 ? `<button onclick="moveItemOrder('categories', '${cat.id}', 1)" class="text-slate-400 hover:text-emerald-500 p-1" title="เลื่อนลง"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>` : ''}
-                                    <button onclick="openCategoryModal('${cat.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
-                                    <button onclick="deleteCategory('${cat.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
-                                </div>
+                                ${categoryReorderMode ? `<span class="shrink-0 text-[10px] text-blue-500">ลากเพื่อเรียง</span>` : `
+                                    <div class="flex items-center space-x-1">
+                                        <button onclick="openCategoryModal('${cat.id}')" class="text-slate-400 hover:text-emerald-500 p-1" title="แก้ไข"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                        <button onclick="deleteCategory('${cat.id}')" class="text-slate-400 hover:text-rose-500 p-1" title="ลบ"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                    </div>
+                                `}
                             </div>
                         `).join('') || '<div class="text-center py-6 text-xs text-slate-400">ยังไม่มีหมวดหมู่ที่สร้างไว้</div>'}
                     </div>
@@ -1955,6 +2208,7 @@
                                 const percent = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
                                 const isOverBudget = spent > limit;
                                 const overAmount = Math.max(0, spent - limit);
+                                const remaining = limit - spent;
                                 return `
                                     <div class="relative overflow-hidden bg-blue-50/70 dark:bg-slate-800 p-4 rounded-3xl border ${isOverBudget ? 'border-rose-300 dark:border-rose-800' : 'border-blue-200 dark:border-blue-900/60'} shadow-sm space-y-2">
                                         <div class="absolute inset-y-0 left-0 w-1 ${isOverBudget ? 'bg-rose-500' : 'bg-blue-500'}"></div>
@@ -1972,10 +2226,11 @@
                                         </div>
                                         ${isOverBudget ? `<div role="alert" class="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"><i data-lucide="triangle-alert" class="h-4 w-4 shrink-0"></i><span>ใช้เกินงบแล้ว ${overAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท</span></div>` : ''}
                                         <div>
-                                            <div class="flex justify-between text-[10px] mb-1 text-slate-400">
+                                            <div class="flex justify-between gap-2 text-[10px] mb-1 text-slate-500 dark:text-slate-400">
                                                 <span>ใช้ไป: ${spent.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                                <span class="font-bold ${isOverBudget ? 'text-rose-700 dark:text-rose-300' : 'text-blue-800 dark:text-blue-200'}">งบ: ${limit.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${percent}%)</span>
+                                                <span class="font-bold ${remaining < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'}">${remaining < 0 ? 'เกินงบ' : 'เหลือใช้'}: ${Math.abs(remaining).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                             </div>
+                                            <div class="mb-1 flex justify-end text-[9px] text-slate-400">งบทั้งหมด: ${limit.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${percent}%)</div>
                                             <div class="w-full bg-blue-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
                                                 <div class="${isOverBudget ? 'bg-rose-500' : 'bg-blue-500'} h-full rounded-full transition-all" style="width: ${percent}%"></div>
                                             </div>
