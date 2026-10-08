@@ -24,16 +24,19 @@
             }
         }
     </script>
-    <!-- Google Font (Prompt) -->
-    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Google Font (Noto Sans Thai) -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- SheetJS for Excel workbooks with multiple worksheets -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <!-- Supabase JS SDK -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
-        body { font-family: 'Prompt', sans-serif; -webkit-tap-highlight-color: transparent; }
+        html { font-size: 17px; }
+        body { font-family: 'Noto Sans Thai', sans-serif; -webkit-tap-highlight-color: transparent; }
         .mobile-container {
             max-width: 480px;
             margin: 0 auto;
@@ -105,6 +108,14 @@
         .dark [class~="dark:bg-slate-700"] { background-color: #334155 !important; }
         .dark [class~="dark:bg-slate-600"] { background-color: #475569 !important; }
         .dark [class~="dark:text-emerald-400"] { color: #93c5fd !important; }
+
+        /* Improve readability for compact labels and secondary text. */
+        [class~="text-[9px]"] { font-size: 11px !important; }
+        [class~="text-[10px]"] { font-size: 12px !important; }
+        [class~="text-[11px]"] { font-size: 13px !important; }
+        [class~="text-xs"] { font-size: 14px !important; }
+        .text-slate-400 { color: #64748b !important; }
+        .dark .text-slate-400 { color: #a8b7cb !important; }
     </style>
 </head>
 <body class="h-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100">
@@ -153,9 +164,9 @@
                 </div>
 
                 <div class="flex items-center space-x-1.5">
-                    <span id="syncStatusBadge" class="px-2.5 py-1 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/50 flex items-center gap-1">
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span>Supabase Online</span>
+                    <span id="syncStatusBadge" class="px-2.5 py-1 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600 flex items-center gap-1" role="status" aria-live="polite">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+                        <span>กำลังเชื่อมต่อ</span>
                     </span>
                     <!-- Dark Mode Toggle -->
                     <button onclick="toggleDarkMode()" class="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">
@@ -331,6 +342,10 @@
         let accountReorderMode = false;
         let draggedAccountId = null;
         let touchDraggedAccountId = null;
+        let budgetReorderMode = false;
+        let savingsGoalReorderMode = false;
+        let draggedOrderedItem = null;
+        let touchDraggedOrderedItem = null;
 
         let globalFilter = {
             mode: 'month',
@@ -353,10 +368,27 @@
 
         window.addEventListener('DOMContentLoaded', async () => {
             lucide.createIcons();
+            window.addEventListener('online', () => setSyncStatus('online'));
+            window.addEventListener('offline', () => setSyncStatus('offline'));
+            if (!navigator.onLine) setSyncStatus('offline');
             await checkAuthSession();
             setInterval(refreshCreditRemindersOnDateChange, 60 * 1000);
             document.addEventListener('visibilitychange', refreshCreditRemindersOnDateChange);
         });
+
+        function setSyncStatus(status) {
+            const badge = document.getElementById('syncStatusBadge');
+            if (!badge) return;
+            const states = {
+                syncing: ['กำลังซิงก์', 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border-blue-200 dark:border-blue-700/50', 'bg-blue-500 animate-pulse'],
+                online: ['ออนไลน์', 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-700/50', 'bg-emerald-500'],
+                offline: ['ออฟไลน์', 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-amber-200 dark:border-amber-700/50', 'bg-amber-500'],
+                error: ['ซิงก์ไม่สำเร็จ', 'bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300 border-rose-200 dark:border-rose-700/50', 'bg-rose-500']
+            };
+            const [label, colors, dot] = states[status] || states.syncing;
+            badge.className = `px-2.5 py-1 rounded-full text-[10px] font-medium ${colors} border flex items-center gap-1`;
+            badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${dot}"></span><span>${label}</span>`;
+        }
 
         function refreshCreditRemindersOnDateChange() {
             const today = new Date().toDateString();
@@ -476,6 +508,13 @@
         // ==========================================
         // DIRECT SUPABASE DATABASE OPERATIONS
         // ==========================================
+        function roundMoney(value) {
+            const amount = Number(value);
+            if (!Number.isFinite(amount)) return 0;
+            const adjustment = Math.sign(amount) * Number.EPSILON * Math.max(1, Math.abs(amount));
+            return Math.round((amount + adjustment) * 100) / 100;
+        }
+
         function sortByOrderIndex(items) {
             return items.slice().sort((a, b) => {
                 const aOrder = a.order_index != null && Number.isFinite(Number(a.order_index)) ? Number(a.order_index) : Number.MAX_SAFE_INTEGER;
@@ -484,35 +523,73 @@
             });
         }
 
+        async function fetchAllUserRows(tableName, userId, orderColumn) {
+            const pageSize = 500;
+            const { count, error: countError } = await supabaseClient.from(tableName)
+                .select('*', { count: 'exact', head: true }).eq('user_id', userId);
+            if (countError) throw countError;
+            if (count === null) throw new Error(`อ่านจำนวนข้อมูลในตาราง ${tableName} ไม่สำเร็จ`);
+
+            const pageCount = Math.ceil(count / pageSize);
+            const pages = await Promise.all(Array.from({ length: pageCount }, (_, pageIndex) => {
+                const query = supabaseClient.from(tableName).select('*')
+                    .eq('user_id', userId)
+                    .order(orderColumn, { ascending: tableName !== 'transactions' })
+                    .order('id', { ascending: true });
+                return query.range(pageIndex * pageSize, (pageIndex + 1) * pageSize - 1);
+            }));
+            const failedPage = pages.find(page => page.error);
+            if (failedPage) throw failedPage.error;
+            return pages.flatMap(page => page.data || []);
+        }
+
         async function loadAllData() {
             if (!currentUser) return;
+            setSyncStatus(navigator.onLine ? 'syncing' : 'offline');
             try {
                 const userId = currentUser.id;
-                const [acc, cat, bud, tx, goal] = await Promise.all([
-                    supabaseClient.from('accounts').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-                    supabaseClient.from('categories').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-                    supabaseClient.from('budgets').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-                    supabaseClient.from('transactions').select('*').eq('user_id', userId).order('transaction_date', { ascending: false }),
-                    supabaseClient.from('savings_goals').select('*').eq('user_id', userId).order('created_at', { ascending: true })
+                const [accountRows, categoryRows, budgetRows, transactionRows, savingsGoalRows] = await Promise.all([
+                    fetchAllUserRows('accounts', userId, 'created_at'),
+                    fetchAllUserRows('categories', userId, 'created_at'),
+                    fetchAllUserRows('budgets', userId, 'created_at'),
+                    fetchAllUserRows('transactions', userId, 'transaction_date'),
+                    fetchAllUserRows('savings_goals', userId, 'created_at')
                 ]);
 
-                if (acc.error) showAlert('ไม่สามารถโหลดข้อมูล บัญชี: ' + acc.error.message, 'error');
-                if (cat.error) showAlert('ไม่สามารถโหลดข้อมูล หมวดหมู่: ' + cat.error.message, 'error');
+                setSyncStatus('online');
 
-                db.accounts = (acc.data || []).map(account => ({
+                const storedAccountRows = accountRows;
+                const storedTransactionRows = transactionRows;
+                const moneyRepairs = [
+                    ...storedAccountRows
+                        .filter(account => Number.isFinite(Number(account.balance)) && Number(account.balance) !== roundMoney(account.balance))
+                        .map(account => supabaseClient.from('accounts').update({ balance: roundMoney(account.balance) })
+                            .eq('id', account.id).eq('user_id', userId)),
+                    ...storedTransactionRows
+                        .filter(transaction => Number.isFinite(Number(transaction.amount)) && Number(transaction.amount) !== roundMoney(transaction.amount))
+                        .map(transaction => supabaseClient.from('transactions').update({ amount: roundMoney(transaction.amount) })
+                            .eq('id', transaction.id).eq('user_id', userId))
+                ];
+                const repairResults = await Promise.all(moneyRepairs);
+                repairResults.filter(result => result.error).forEach(result => console.error('Money precision cleanup error:', result.error));
+
+                db.accounts = storedAccountRows.map(account => ({
                     ...account,
                     balance: ['credit', 'loan'].includes(account.account_type)
-                        ? -Math.abs(Number(account.balance) || 0)
-                        : Number(account.balance) || 0
+                        ? -Math.abs(roundMoney(account.balance))
+                        : roundMoney(account.balance)
                 })).sort((a, b) => {
                     const aOrder = a.order_index != null && Number.isFinite(Number(a.order_index)) ? Number(a.order_index) : Number.MAX_SAFE_INTEGER;
                     const bOrder = b.order_index != null && Number.isFinite(Number(b.order_index)) ? Number(b.order_index) : Number.MAX_SAFE_INTEGER;
                     return aOrder - bOrder || new Date(a.created_at || 0) - new Date(b.created_at || 0);
                 });
-                db.categories = sortByOrderIndex(cat.data || []);
-                db.budgets = sortByOrderIndex(bud.data || []);
-                db.transactions = tx.data || [];
-                db.savings_goals = sortByOrderIndex(goal.data || []);
+                db.categories = sortByOrderIndex(categoryRows);
+                db.budgets = sortByOrderIndex(budgetRows);
+                db.transactions = storedTransactionRows.map(transaction => ({
+                    ...transaction,
+                    amount: roundMoney(transaction.amount)
+                }));
+                db.savings_goals = sortByOrderIndex(savingsGoalRows);
                 db.summary_notes = Object.fromEntries(db.accounts.map(account => [String(account.id), account.note || '']));
 
                 // Migrate notes previously stored only in this browser into the accounts table.
@@ -539,6 +616,7 @@
                     }
                 }
             } catch (e) {
+                setSyncStatus('error');
                 console.error("Supabase load exception:", e);
                 showAlert("เกิดข้อผิดพลาดในการเชื่อมต่อ Supabase: " + e.message, 'error');
             }
@@ -550,10 +628,13 @@
                 return null;
             }
             delete record.id;
+            if (tableName === 'accounts' && record.balance !== undefined) record.balance = roundMoney(record.balance);
+            if (tableName === 'transactions' && record.amount !== undefined) record.amount = roundMoney(record.amount);
             record.user_id = currentUser.id;
 
             const { data, error } = await supabaseClient.from(tableName).insert([record]).select();
-            if (error) { 
+            if (error) {
+                setSyncStatus('error');
                 showAlert('บันทึกเข้า Supabase ไม่สำเร็จ: ' + error.message, 'error'); 
                 console.error("Supabase Insert Error:", error);
                 return null; 
@@ -561,6 +642,7 @@
             if (data && data[0]) {
                 db[tableName].push(data[0]);
             }
+            setSyncStatus('online');
             return data ? data[0] : record;
         }
 
@@ -571,11 +653,14 @@
             }
             delete updatedFields.id;
             delete updatedFields.user_id;
+            if (tableName === 'accounts' && updatedFields.balance !== undefined) updatedFields.balance = roundMoney(updatedFields.balance);
+            if (tableName === 'transactions' && updatedFields.amount !== undefined) updatedFields.amount = roundMoney(updatedFields.amount);
 
-            const { error } = await supabaseClient.from(tableName).update(updatedFields)
-                .eq('id', id).eq('user_id', currentUser.id);
-            if (error) { 
-                showAlert('อัปเดต Supabase ไม่สำเร็จ: ' + error.message, 'error'); 
+            const { data, error } = await supabaseClient.from(tableName).update(updatedFields)
+                .eq('id', id).eq('user_id', currentUser.id).select('id');
+            if (error || !data?.length) {
+                setSyncStatus('error');
+                showAlert('อัปเดต Supabase ไม่สำเร็จ: ' + (error?.message || 'ไม่พบข้อมูลหรือไม่มีสิทธิ์แก้ไข'), 'error'); 
                 console.error("Supabase Update Error:", error);
                 return false; 
             }
@@ -583,6 +668,7 @@
             if (idx !== -1) {
                 db[tableName][idx] = { ...db[tableName][idx], ...updatedFields };
             }
+            setSyncStatus('online');
             return true;
         }
 
@@ -591,14 +677,16 @@
                 showAlert('กรุณาเข้าสู่ระบบก่อนลบข้อมูล', 'error');
                 return false;
             }
-            const { error } = await supabaseClient.from(tableName).delete()
-                .eq('id', id).eq('user_id', currentUser.id);
-            if (error) { 
-                showAlert('ลบจาก Supabase ไม่สำเร็จ: ' + error.message, 'error'); 
+            const { data, error } = await supabaseClient.from(tableName).delete()
+                .eq('id', id).eq('user_id', currentUser.id).select('id');
+            if (error || !data?.length) {
+                setSyncStatus('error');
+                showAlert('ลบจาก Supabase ไม่สำเร็จ: ' + (error?.message || 'ไม่พบข้อมูลหรือไม่มีสิทธิ์ลบ'), 'error'); 
                 console.error("Supabase Delete Error:", error);
                 return false; 
             }
             db[tableName] = db[tableName].filter(item => item.id !== id);
+            setSyncStatus('online');
             return true;
         }
 
@@ -898,9 +986,10 @@
                 } else if (globalFilter.mode === 'year') {
                     return txDate.getFullYear() === d.getFullYear();
                 } else if (globalFilter.mode === 'custom' && globalFilter.startDate && globalFilter.endDate) {
-                    const start = new Date(globalFilter.startDate);
-                    const end = new Date(globalFilter.endDate);
-                    end.setHours(23, 59, 59, 999);
+                    const [startYear, startMonth, startDay] = globalFilter.startDate.split('-').map(Number);
+                    const [endYear, endMonth, endDay] = globalFilter.endDate.split('-').map(Number);
+                    const start = new Date(startYear, startMonth - 1, startDay);
+                    const end = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
                     return txDate >= start && txDate <= end;
                 }
                 return true;
@@ -1269,6 +1358,107 @@
         }
         function closeSubAccountModal() { document.getElementById('subAccountModal').classList.add('hidden'); }
 
+        async function exportTransactionsCsvLegacy() {
+            if (!currentUser) {
+                showAlert('กรุณาเข้าสู่ระบบก่อนส่งออกข้อมูล', 'error');
+                return;
+            }
+
+            const userId = currentUser.id;
+            const tableNames = ['accounts', 'categories', 'budgets', 'transactions', 'savings_goals'];
+            const pageSize = 1000;
+            try {
+                const tableEntries = await Promise.all(tableNames.map(async tableName => {
+                    const { count, error: countError } = await supabaseClient.from(tableName)
+                        .select('*', { count: 'exact', head: true }).eq('user_id', userId);
+                    if (countError) throw countError;
+                    if (count === null) throw new Error(`อ่านจำนวนข้อมูลในตาราง ${tableName} ไม่สำเร็จ`);
+
+                    const pageCount = Math.ceil(count / pageSize);
+                    const pages = await Promise.all(Array.from({ length: pageCount }, (_, pageIndex) => {
+                        const from = pageIndex * pageSize;
+                        return supabaseClient.from(tableName).select('*')
+                            .eq('user_id', userId).order('id', { ascending: true })
+                            .range(from, from + pageSize - 1);
+                    }));
+                    const failedPage = pages.find(page => page.error);
+                    if (failedPage) throw failedPage.error;
+                    return [tableName, pages.flatMap(page => page.data || [])];
+                }));
+                const tables = Object.fromEntries(tableEntries);
+
+                const records = Object.entries(tables).flatMap(([tableName, items]) =>
+                    items.map(item => ({ table: tableName, ...item }))
+                );
+                const headers = ['table', ...new Set(records.flatMap(record => Object.keys(record).filter(key => key !== 'table')))];
+                const rows = records.map(record => headers.map(header => record[header] ?? ''));
+                const csvCell = value => {
+                    let text = typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '');
+                    if (/^[\t\r ]*[=+\-@]/.test(text)) text = `'${text}`;
+                    return `"${text.replace(/"/g, '""')}"`;
+                };
+                const csv = '\uFEFF' + [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\\r\\n');
+                const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `savetung-all-data-${new Date().toISOString().slice(0, 10)}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                showAlert('ส่งออกข้อมูลทุกตารางเป็น CSV แล้ว');
+            } catch (error) {
+                console.error('CSV export error:', error);
+                showAlert('ส่งออกข้อมูลไม่สำเร็จ: ' + error.message, 'error');
+            }
+        }
+
+        async function exportTransactionsCsv() {
+            if (!currentUser) {
+                showAlert('กรุณาเข้าสู่ระบบก่อนส่งออกข้อมูล', 'error');
+                return;
+            }
+            if (!window.XLSX) {
+                showAlert('ไม่สามารถโหลดเครื่องมือสร้างไฟล์ Excel ได้', 'error');
+                return;
+            }
+
+            const userId = currentUser.id;
+            const tableNames = ['accounts', 'categories', 'budgets', 'transactions', 'savings_goals'];
+            const pageSize = 500;
+
+            try {
+                const tableEntries = await Promise.all(tableNames.map(async tableName => {
+                    const { count, error: countError } = await supabaseClient.from(tableName)
+                        .select('*', { count: 'exact', head: true }).eq('user_id', userId);
+                    if (countError) throw countError;
+                    if (count === null) throw new Error(`อ่านจำนวนข้อมูลในตาราง ${tableName} ไม่สำเร็จ`);
+
+                    const pageCount = Math.ceil(count / pageSize);
+                    const pages = await Promise.all(Array.from({ length: pageCount }, (_, pageIndex) => {
+                        const from = pageIndex * pageSize;
+                        return supabaseClient.from(tableName).select('*')
+                            .eq('user_id', userId).order('id', { ascending: true })
+                            .range(from, from + pageSize - 1);
+                    }));
+                    const failedPage = pages.find(page => page.error);
+                    if (failedPage) throw failedPage.error;
+                    return [tableName, pages.flatMap(page => page.data || [])];
+                }));
+
+                const workbook = XLSX.utils.book_new();
+                tableEntries.forEach(([tableName, rows]) => {
+                    const worksheet = XLSX.utils.json_to_sheet(rows);
+                    XLSX.utils.book_append_sheet(workbook, worksheet, tableName);
+                });
+                XLSX.writeFile(workbook, `savetung-all-data-${new Date().toISOString().slice(0, 10)}.xlsx`);
+                showAlert('ส่งออกข้อมูลครบ 5 ตารางเป็นไฟล์ Excel แล้ว');
+            } catch (error) {
+                console.error('Excel export error:', error);
+                showAlert('ส่งออกข้อมูลไม่สำเร็จ: ' + error.message, 'error');
+            }
+        }
+
         function renderTransactions(container) {
             const filteredTxs = filterTransactionsByDate(db.transactions);
             
@@ -1306,6 +1496,11 @@
 
             container.innerHTML = `
                 <div class="space-y-4 animate-in fade-in duration-200">
+                    <div class="flex justify-end">
+                        <button onclick="exportTransactionsCsv()" class="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-600 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                            <i data-lucide="download" class="h-3.5 w-3.5"></i> ส่งออกข้อมูลทั้งหมด Excel
+                        </button>
+                    </div>
                     ${renderDateFilterBar()}
 
                     <!-- Financial Summary Card -->
@@ -1498,9 +1693,9 @@
         function getTransactionBalanceDeltas(tx) {
             const deltas = new Map();
             const addDelta = (accountId, delta) => {
-                if (accountId) deltas.set(accountId, (deltas.get(accountId) || 0) + delta);
+                if (accountId) deltas.set(accountId, roundMoney((deltas.get(accountId) || 0) + delta));
             };
-            const amount = Number(tx.amount) || 0;
+            const amount = roundMoney(tx.amount);
 
             switch (tx.transaction_type) {
                 case 'income':
@@ -1523,15 +1718,34 @@
         }
 
         async function applyTransactionBalanceDeltas(deltas) {
+            const applied = [];
+            const rollbackApplied = async () => {
+                let rollbackFailed = false;
+                for (const [appliedAccountId, originalBalance] of applied.reverse()) {
+                    if (!await updateInDB('accounts', appliedAccountId, { balance: originalBalance })) rollbackFailed = true;
+                }
+                if (rollbackFailed) {
+                    await loadAllData();
+                    showAlert('ปรับยอดบางบัญชีไม่สำเร็จ และคืนค่ายอดเดิมไม่ครบ กรุณาตรวจสอบบัญชี', 'error');
+                }
+                return !rollbackFailed;
+            };
+
             for (const [accountId, delta] of deltas) {
                 if (!delta) continue;
-                const account = db.accounts.find(a => a.id === accountId);
+                const account = db.accounts.find(a => String(a.id) === String(accountId));
                 if (!account) {
                     showAlert('ไม่พบบัญชีที่ผูกกับรายการนี้', 'error');
+                    await rollbackApplied();
                     return false;
                 }
-                const balance = Number(account.balance) + delta;
-                if (!await updateInDB('accounts', accountId, { balance })) return false;
+                const previousBalance = Number(account.balance);
+                const balance = roundMoney(previousBalance + delta);
+                if (!await updateInDB('accounts', accountId, { balance })) {
+                    await rollbackApplied();
+                    return false;
+                }
+                applied.push([accountId, previousBalance]);
             }
             return true;
         }
@@ -1562,7 +1776,7 @@
             const txData = {
                 transaction_date: new Date(date).toISOString(),
                 transaction_type: type,
-                amount,
+                amount: roundMoney(amount),
                 wallet_id,
                 to_wallet_id,
                 category_id,
@@ -1572,21 +1786,33 @@
                 installment_current_month
             };
 
-            const oldTx = editId ? db.transactions.find(tx => tx.id === editId) : null;
-            const saved = editId
-                ? await updateInDB('transactions', editId, txData)
-                : await saveToDB('transactions', txData);
-            if (!saved) return;
+            const oldTx = editId ? db.transactions.find(tx => String(tx.id) === String(editId)) : null;
+            if (editId && !oldTx) {
+                showAlert('ไม่พบรายการที่ต้องการแก้ไข กรุณาโหลดข้อมูลใหม่', 'error');
+                return;
+            }
 
             const balanceDeltas = new Map();
             const mergeDeltas = (source, multiplier) => {
                 for (const [accountId, delta] of getTransactionBalanceDeltas(source)) {
-                    balanceDeltas.set(accountId, (balanceDeltas.get(accountId) || 0) + delta * multiplier);
+                    balanceDeltas.set(accountId, roundMoney((balanceDeltas.get(accountId) || 0) + delta * multiplier));
                 }
             };
             if (oldTx) mergeDeltas(oldTx, -1);
             mergeDeltas(txData, 1);
             if (!await applyTransactionBalanceDeltas(balanceDeltas)) return;
+
+            const saved = editId
+                ? await updateInDB('transactions', editId, txData)
+                : await saveToDB('transactions', txData);
+            if (!saved) {
+                const rollbackDeltas = new Map([...balanceDeltas].map(([accountId, delta]) => [accountId, -delta]));
+                if (!await applyTransactionBalanceDeltas(rollbackDeltas)) {
+                    await loadAllData();
+                    showAlert('บันทึกรายการไม่สำเร็จ และคืนยอดบัญชีไม่ครบ กรุณาตรวจสอบข้อมูล', 'error');
+                }
+                return;
+            }
 
             closeTransactionModal();
             await loadAllData();
@@ -1596,12 +1822,22 @@
 
         async function deleteTransaction(id) {
             if (confirm('ต้องการลบรายการนี้ใช่หรือไม่?')) {
-                const tx = db.transactions.find(item => item.id === id);
-                if (!tx || !await deleteFromDB('transactions', id)) return;
-                const reverseDeltas = new Map(
+                const tx = db.transactions.find(item => String(item.id) === String(id));
+                if (!tx) return;
+                const balanceDeltas = new Map(
                     [...getTransactionBalanceDeltas(tx)].map(([accountId, delta]) => [accountId, -delta])
                 );
-                if (!await applyTransactionBalanceDeltas(reverseDeltas)) return;
+                if (!await applyTransactionBalanceDeltas(balanceDeltas)) return;
+
+                if (!await deleteFromDB('transactions', id)) {
+                    const rollbackDeltas = new Map([...balanceDeltas].map(([accountId, delta]) => [accountId, -delta]));
+                    if (!await applyTransactionBalanceDeltas(rollbackDeltas)) {
+                        await loadAllData();
+                        showAlert('ลบรายการไม่สำเร็จ และคืนยอดบัญชีไม่ครบ กรุณาตรวจสอบข้อมูล', 'error');
+                    }
+                    return;
+                }
+
                 await loadAllData();
                 renderCurrentTab();
                 showAlert('ลบรายการสำเร็จ', 'success');
@@ -1813,13 +2049,11 @@
                 due_date: type === 'credit' ? Number(document.getElementById('accDueDate').value) : null
             };
 
-            if (editId) {
-                await updateInDB('accounts', editId, accData);
-                showAlert('แก้ไขบัญชีสำเร็จ');
-            } else {
-                await saveToDB('accounts', accData);
-                showAlert('เพิ่มบัญชีสำเร็จ');
-            }
+            const saved = editId
+                ? await updateInDB('accounts', editId, accData)
+                : await saveToDB('accounts', accData);
+            if (!saved) return;
+            showAlert(editId ? 'แก้ไขบัญชีสำเร็จ' : 'เพิ่มบัญชีสำเร็จ');
             closeAccountModal();
             await loadAllData();
             renderCurrentTab();
@@ -1827,7 +2061,7 @@
 
         async function deleteAccount(id) {
             if (confirm('ต้องการลบบัญชีนี้ใช่หรือไม่?')) {
-                await deleteFromDB('accounts', id);
+                if (!await deleteFromDB('accounts', id)) return;
                 await loadAllData();
                 renderCurrentTab();
                 showAlert('ลบบัญชีสำเร็จ', 'success');
@@ -2132,13 +2366,11 @@
                 color: document.getElementById('catColor').value || '#10b981'
             };
 
-            if (editId) {
-                await updateInDB('categories', editId, catData);
-                showAlert('แก้ไขหมวดหมู่สำเร็จ');
-            } else {
-                await saveToDB('categories', catData);
-                showAlert('เพิ่มหมวดหมู่สำเร็จ');
-            }
+            const saved = editId
+                ? await updateInDB('categories', editId, catData)
+                : await saveToDB('categories', catData);
+            if (!saved) return;
+            showAlert(editId ? 'แก้ไขหมวดหมู่สำเร็จ' : 'เพิ่มหมวดหมู่สำเร็จ');
             closeCategoryModal();
             await loadAllData();
             renderCurrentTab();
@@ -2146,11 +2378,112 @@
 
         async function deleteCategory(id) {
             if (confirm('ต้องการลบหมวดหมู่นี้ใช่หรือไม่?')) {
-                await deleteFromDB('categories', id);
+                if (!await deleteFromDB('categories', id)) return;
                 await loadAllData();
                 renderCurrentTab();
                 showAlert('ลบหมวดหมู่สำเร็จ', 'success');
             }
+        }
+
+        function moveOrderedListItem(tableName, sourceId, targetId, insertAfter) {
+            const items = db[tableName];
+            const sourceIndex = items.findIndex(item => String(item.id) === String(sourceId));
+            const targetIndex = items.findIndex(item => String(item.id) === String(targetId));
+            if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return false;
+            const [moved] = items.splice(sourceIndex, 1);
+            const adjustedTargetIndex = items.findIndex(item => String(item.id) === String(targetId));
+            items.splice(adjustedTargetIndex + (insertAfter ? 1 : 0), 0, moved);
+            return true;
+        }
+
+        function startOrderedItemDrag(event, tableName, itemId) {
+            if (!isOrderedListReordering(tableName)) {
+                event.preventDefault();
+                return;
+            }
+            draggedOrderedItem = { tableName, id: String(itemId) };
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', String(itemId));
+        }
+
+        function dropOrderedItem(event, tableName, targetId) {
+            event.preventDefault();
+            if (!isOrderedListReordering(tableName)) return;
+            const sourceId = draggedOrderedItem?.tableName === tableName
+                ? draggedOrderedItem.id
+                : event.dataTransfer.getData('text/plain');
+            const target = event.currentTarget;
+            const insertAfter = event.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+            if (moveOrderedListItem(tableName, sourceId, targetId, insertAfter)) renderCurrentTab();
+        }
+
+        function isOrderedListReordering(tableName) {
+            return tableName === 'budgets' ? budgetReorderMode : savingsGoalReorderMode;
+        }
+
+        function startOrderedItemTouch(event, tableName, itemId) {
+            if (!isOrderedListReordering(tableName) || event.touches.length !== 1) return;
+            touchDraggedOrderedItem = { tableName, id: String(itemId) };
+            event.preventDefault();
+            event.currentTarget.classList.add('opacity-60', 'ring-2', 'ring-blue-400');
+        }
+
+        function moveOrderedItemTouch(event) {
+            if (!touchDraggedOrderedItem || !isOrderedListReordering(touchDraggedOrderedItem.tableName) || !event.touches.length) return;
+            event.preventDefault();
+            const touch = event.touches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('[data-ordered-item-id]');
+            if (!target || target.dataset.orderedList !== touchDraggedOrderedItem.tableName || target.dataset.orderedItemId === touchDraggedOrderedItem.id) return;
+            const tableName = touchDraggedOrderedItem.tableName;
+            const insertAfter = touch.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+            if (!moveOrderedListItem(tableName, touchDraggedOrderedItem.id, target.dataset.orderedItemId, insertAfter)) return;
+            const list = document.getElementById(tableName === 'budgets' ? 'budgetList' : 'goalList');
+            if (!list) return;
+            db[tableName].forEach((item, index) => {
+                const card = list.querySelector(`[data-ordered-item-id="${item.id}"]`);
+                if (!card) return;
+                list.appendChild(card);
+                const number = card.querySelector('.ordered-item-number');
+                if (number) number.textContent = index + 1;
+            });
+        }
+
+        function endOrderedItemTouch(event) {
+            if (!touchDraggedOrderedItem) return;
+            document.querySelectorAll('[data-ordered-item-id]').forEach(card => card.classList.remove('opacity-60', 'ring-2', 'ring-blue-400'));
+            touchDraggedOrderedItem = null;
+            if (event) event.preventDefault();
+        }
+
+        async function saveOrderedList(tableName) {
+            if (!currentUser) {
+                showAlert('กรุณาเข้าสู่ระบบก่อนบันทึกลำดับ', 'error');
+                return;
+            }
+            const results = await Promise.all(db[tableName].map((item, index) =>
+                supabaseClient.from(tableName).update({ order_index: index })
+                    .eq('id', item.id).eq('user_id', currentUser.id)
+            ));
+            const failed = results.find(result => result.error);
+            if (failed) {
+                showAlert('บันทึกลำดับไม่สำเร็จ: ' + failed.error.message, 'error');
+                await loadAllData();
+                renderCurrentTab();
+                return;
+            }
+            db[tableName].forEach((item, index) => { item.order_index = index; });
+            if (tableName === 'budgets') budgetReorderMode = false;
+            else savingsGoalReorderMode = false;
+            await loadAllData();
+            renderCurrentTab();
+            showAlert(tableName === 'budgets' ? 'บันทึกลำดับงบประมาณสำเร็จ' : 'บันทึกลำดับเป้าหมายสำเร็จ');
+        }
+
+        async function cancelOrderedListReorder(tableName) {
+            if (tableName === 'budgets') budgetReorderMode = false;
+            else savingsGoalReorderMode = false;
+            await loadAllData();
+            renderCurrentTab();
         }
 
         function parseBudgetPeriodDate(value, isEnd = false) {
@@ -2183,16 +2516,24 @@
             container.innerHTML = `
                 <div class="space-y-5 animate-in fade-in duration-200">
                     <div>
-                        <div class="flex justify-between items-center mb-2 px-1">
+                        <div class="flex justify-between items-center gap-2 mb-2 px-1">
                             <div>
                                 <h2 class="text-sm font-bold">งบประมาณรายจ่าย (Budgets)</h2>
-                                <p class="text-[10px] text-blue-600 dark:text-blue-300">กำหนดช่วงวันที่ของงบ และติดตามยอดใช้ตามหมวดหมู่</p>
+                                <p class="text-[10px] text-amber-700 dark:text-amber-300">${budgetReorderMode ? 'ลากรายการเพื่อจัดลำดับ แล้วกดบันทึก' : 'กำหนดช่วงวันที่ของงบ และติดตามยอดใช้ตามหมวดหมู่'}</p>
                             </div>
-                            <button onclick="openBudgetModal()" class="bg-emerald-600 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
-                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มงบ
-                            </button>
+                            <div class="flex shrink-0 items-center gap-1.5">
+                                ${budgetReorderMode ? `
+                                    <button onclick="saveOrderedList('budgets')" class="bg-blue-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md">บันทึกลำดับ</button>
+                                    <button onclick="cancelOrderedListReorder('budgets')" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">ยกเลิก</button>
+                                ` : `
+                                    <button onclick="budgetReorderMode = true; renderCurrentTab()" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">จัดเรียง</button>
+                                    <button onclick="openBudgetModal()" class="bg-emerald-600 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md">
+                                        <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มงบ
+                                    </button>
+                                `}
+                            </div>
                         </div>
-                        <div class="space-y-2.5">
+                        <div id="budgetList" class="space-y-2.5">
                             ${db.budgets.map((bud, index) => {
                                 const cat = db.categories.find(c => c.id === bud.category_id) || { category_name: 'ทั่วไป' };
                                 const periodStart = parseBudgetPeriodDate(bud.start_period);
@@ -2210,19 +2551,20 @@
                                 const overAmount = Math.max(0, spent - limit);
                                 const remaining = limit - spent;
                                 return `
-                                    <div class="relative overflow-hidden bg-blue-50/70 dark:bg-slate-800 p-4 rounded-3xl border ${isOverBudget ? 'border-rose-300 dark:border-rose-800' : 'border-blue-200 dark:border-blue-900/60'} shadow-sm space-y-2">
-                                        <div class="absolute inset-y-0 left-0 w-1 ${isOverBudget ? 'bg-rose-500' : 'bg-blue-500'}"></div>
+                                    <div data-ordered-item-id="${bud.id}" data-ordered-list="budgets" draggable="${budgetReorderMode}" ondragstart="startOrderedItemDrag(event, 'budgets', '${bud.id}')" ondragover="event.preventDefault()" ondrop="dropOrderedItem(event, 'budgets', '${bud.id}')" ontouchstart="startOrderedItemTouch(event, 'budgets', '${bud.id}')" ontouchmove="moveOrderedItemTouch(event)" ontouchend="endOrderedItemTouch(event)" ontouchcancel="endOrderedItemTouch(event)" style="${budgetReorderMode ? 'touch-action:none;' : ''}" class="relative overflow-hidden bg-amber-50/70 dark:bg-slate-800 p-4 rounded-3xl border ${isOverBudget ? 'border-rose-300 dark:border-rose-800' : 'border-amber-200 dark:border-amber-900/60'} shadow-sm space-y-2 ${budgetReorderMode ? 'cursor-grab active:cursor-grabbing' : ''}">
+                                        <div class="absolute inset-y-0 left-0 w-1 ${isOverBudget ? 'bg-rose-500' : 'bg-amber-500'}"></div>
                                         <div class="flex justify-between items-start">
                                             <div>
-                                                <span class="text-[10px] font-bold text-blue-700 dark:text-blue-300">${formatBudgetPeriod(bud.start_period)} ถึง ${formatBudgetPeriod(bud.end_period, true)}</span>
+                                                ${budgetReorderMode ? `<span class="ordered-item-number mb-1 inline-flex h-6 w-6 items-center justify-center rounded-lg bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">${index + 1}</span>` : ''}
+                                                <span class="text-[10px] font-bold text-amber-700 dark:text-amber-300">${formatBudgetPeriod(bud.start_period)} ถึง ${formatBudgetPeriod(bud.end_period, true)}</span>
                                                 <h4 class="font-bold text-xs text-slate-900 dark:text-white mt-0.5">${bud.budget_name} (${cat.category_name})</h4>
                                             </div>
-                                            <div class="flex items-center space-x-1">
-                                                ${index > 0 ? `<button onclick="moveItemOrder('budgets', '${bud.id}', -1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>` : ''}
-                                                ${index < db.budgets.length - 1 ? `<button onclick="moveItemOrder('budgets', '${bud.id}', 1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>` : ''}
-                                                <button onclick="openBudgetModal('${bud.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
-                                                <button onclick="deleteBudget('${bud.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
-                                            </div>
+                                            ${budgetReorderMode ? `<span class="text-[10px] font-semibold text-blue-600 dark:text-blue-300">ลากเพื่อเรียง</span>` : `
+                                                <div class="flex items-center space-x-1">
+                                                    <button onclick="openBudgetModal('${bud.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                                    <button onclick="deleteBudget('${bud.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                                </div>
+                                            `}
                                         </div>
                                         ${isOverBudget ? `<div role="alert" class="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"><i data-lucide="triangle-alert" class="h-4 w-4 shrink-0"></i><span>ใช้เกินงบแล้ว ${overAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท</span></div>` : ''}
                                         <div>
@@ -2231,8 +2573,8 @@
                                                 <span class="font-bold ${remaining < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'}">${remaining < 0 ? 'เกินงบ' : 'เหลือใช้'}: ${Math.abs(remaining).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                             </div>
                                             <div class="mb-1 flex justify-end text-[9px] text-slate-400">งบทั้งหมด: ${limit.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${percent}%)</div>
-                                            <div class="w-full bg-blue-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
-                                                <div class="${isOverBudget ? 'bg-rose-500' : 'bg-blue-500'} h-full rounded-full transition-all" style="width: ${percent}%"></div>
+                                            <div class="w-full bg-amber-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
+                                                <div class="${isOverBudget ? 'bg-rose-500' : 'bg-amber-500'} h-full rounded-full transition-all" style="width: ${percent}%"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -2242,45 +2584,54 @@
                     </div>
 
                     <div>
-                        <div class="flex justify-between items-center mb-2 px-1">
+                        <div class="flex justify-between items-center gap-2 mb-2 px-1">
                             <div>
                                 <h2 class="text-sm font-bold">เป้าหมายเงินออม (Savings Goals)</h2>
-                                <p class="text-[10px] text-slate-400">จัดลำดับเป้าหมายการออมและคำนวณยอดต่อเดือน</p>
+                                <p class="text-[10px] text-slate-400">${savingsGoalReorderMode ? 'ลากรายการเพื่อจัดลำดับ แล้วกดบันทึก' : 'จัดลำดับเป้าหมายการออมและคำนวณยอดต่อเดือน'}</p>
                             </div>
-                            <button onclick="openGoalModal()" class="bg-violet-600 hover:bg-violet-700 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md shadow-violet-600/20">
-                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มเป้าหมาย
-                            </button>
+                            <div class="flex shrink-0 items-center gap-1.5">
+                                ${savingsGoalReorderMode ? `
+                                    <button onclick="saveOrderedList('savings_goals')" class="bg-blue-600 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md">บันทึกลำดับ</button>
+                                    <button onclick="cancelOrderedListReorder('savings_goals')" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">ยกเลิก</button>
+                                ` : `
+                                    <button onclick="savingsGoalReorderMode = true; renderCurrentTab()" class="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-200">จัดเรียง</button>
+                                    <button onclick="openGoalModal()" class="bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 shadow-md shadow-fuchsia-600/20">
+                                        <i data-lucide="plus" class="w-3.5 h-3.5"></i> เพิ่มเป้าหมาย
+                                    </button>
+                                `}
+                            </div>
                         </div>
-                        <div class="space-y-2.5">
+                        <div id="goalList" class="space-y-2.5">
                             ${db.savings_goals.map((goal, index) => {
                                 const targetAmount = Number(goal.target_amount) || 0;
                                 const currentAmount = Number(goal.current_amount) || 0;
                                 const percent = targetAmount > 0 ? Math.min(100, Math.round((currentAmount / targetAmount) * 100)) : 0;
                                 const isGoalReached = targetAmount > 0 && currentAmount >= targetAmount;
                                 return `
-                                    <div class="relative overflow-hidden bg-violet-50 dark:bg-slate-800 p-4 rounded-3xl border border-violet-200 dark:border-violet-800 shadow-sm space-y-2">
-                                        <div class="absolute inset-y-0 left-0 w-1 bg-violet-600"></div>
+                                    <div data-ordered-item-id="${goal.id}" data-ordered-list="savings_goals" draggable="${savingsGoalReorderMode}" ondragstart="startOrderedItemDrag(event, 'savings_goals', '${goal.id}')" ondragover="event.preventDefault()" ondrop="dropOrderedItem(event, 'savings_goals', '${goal.id}')" ontouchstart="startOrderedItemTouch(event, 'savings_goals', '${goal.id}')" ontouchmove="moveOrderedItemTouch(event)" ontouchend="endOrderedItemTouch(event)" ontouchcancel="endOrderedItemTouch(event)" style="${savingsGoalReorderMode ? 'touch-action:none;' : ''}" class="relative overflow-hidden bg-teal-50/70 dark:bg-slate-800 p-4 rounded-3xl border border-teal-200 dark:border-teal-900/60 shadow-sm space-y-2 ${savingsGoalReorderMode ? 'cursor-grab active:cursor-grabbing' : ''}">
+                                        <div class="absolute inset-y-0 left-0 w-1 bg-teal-600"></div>
                                         <div class="flex justify-between items-start">
                                             <div>
-                                                <div class="mb-1 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[9px] font-semibold text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"><i data-lucide="target" class="h-3 w-3"></i> เป้าหมายเงินออม</div>
+                                                ${savingsGoalReorderMode ? `<span class="ordered-item-number mb-1 inline-flex h-6 w-6 items-center justify-center rounded-lg bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">${index + 1}</span>` : ''}
+                                                <div class="mb-1 inline-flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-[9px] font-semibold text-teal-700 dark:bg-teal-950/50 dark:text-teal-300"><i data-lucide="target" class="h-3 w-3"></i> เป้าหมายเงินออม</div>
                                                 <h4 class="font-bold text-sm text-slate-900 dark:text-white">${escapeHtml(goal.goal_title)}</h4>
                                                 <div class="text-[10px] text-slate-400">ออมเดือนละ ${Number(goal.monthly_target).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${goal.saved_periods}/${goal.total_periods} งวด)</div>
                                             </div>
-                                            <div class="flex items-center space-x-1">
-                                                ${index > 0 ? `<button onclick="moveItemOrder('savings_goals', '${goal.id}', -1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>` : ''}
-                                                ${index < db.savings_goals.length - 1 ? `<button onclick="moveItemOrder('savings_goals', '${goal.id}', 1)" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>` : ''}
-                                                <button onclick="openGoalModal('${goal.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
-                                                <button onclick="deleteGoal('${goal.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
-                                            </div>
+                                            ${savingsGoalReorderMode ? `<span class="text-[10px] font-semibold text-blue-600 dark:text-blue-300">ลากเพื่อเรียง</span>` : `
+                                                <div class="flex items-center space-x-1">
+                                                    <button onclick="openGoalModal('${goal.id}')" class="text-slate-400 hover:text-emerald-500 p-1"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>
+                                                    <button onclick="deleteGoal('${goal.id}')" class="text-slate-400 hover:text-rose-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                                                </div>
+                                            `}
                                         </div>
                                         ${isGoalReached ? `<div role="status" class="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"><i data-lucide="party-popper" class="h-4 w-4 shrink-0"></i><span>ยินดีด้วย! คุณออมถึงเป้าหมายแล้ว 🎉</span></div>` : ''}
                                         <div>
                                             <div class="flex justify-between text-[10px] mb-1 text-slate-400">
-                                                <span class="text-violet-700 dark:text-violet-300">เก็บแล้ว: ${currentAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                                <span class="font-bold text-violet-800 dark:text-violet-200">เป้าหมาย: ${targetAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${percent}%)</span>
+                                                <span class="text-teal-700 dark:text-teal-300">เก็บแล้ว: ${currentAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                <span class="font-bold text-teal-800 dark:text-teal-200">เป้าหมาย: ${targetAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${percent}%)</span>
                                             </div>
-                                            <div class="w-full bg-violet-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
-                                                <div class="${isGoalReached ? 'bg-emerald-500' : 'bg-violet-600'} h-full rounded-full transition-all" style="width: ${percent}%"></div>
+                                            <div class="w-full bg-teal-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
+                                                <div class="${isGoalReached ? 'bg-emerald-500' : 'bg-teal-600'} h-full rounded-full transition-all" style="width: ${percent}%"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -2426,13 +2777,11 @@
                 start_period: startPeriod,
                 end_period: endPeriod
             };
-            if (editId) {
-                await updateInDB('budgets', editId, budData);
-                showAlert('แก้ไขงบประมาณสำเร็จ');
-            } else {
-                await saveToDB('budgets', budData);
-                showAlert('สร้างงบประมาณสำเร็จ');
-            }
+            const saved = editId
+                ? await updateInDB('budgets', editId, budData)
+                : await saveToDB('budgets', budData);
+            if (!saved) return;
+            showAlert(editId ? 'แก้ไขงบประมาณสำเร็จ' : 'สร้างงบประมาณสำเร็จ');
             closeBudgetModal();
             await loadAllData();
             renderCurrentTab();
@@ -2446,16 +2795,14 @@
                 target_amount: Number(document.getElementById('goalTarget').value),
                 current_amount: Number(document.getElementById('goalCurrent').value),
                 total_periods: Number(document.getElementById('goalPeriods').value),
-                saved_periods: 0,
                 monthly_target: Number(document.getElementById('goalMonthly').value)
             };
-            if (editId) {
-                await updateInDB('savings_goals', editId, goalData);
-                showAlert('แก้ไขเป้าหมายสำเร็จ');
-            } else {
-                await saveToDB('savings_goals', goalData);
-                showAlert('สร้างเป้าหมายสำเร็จ');
-            }
+            if (!editId) goalData.saved_periods = 0;
+            const saved = editId
+                ? await updateInDB('savings_goals', editId, goalData)
+                : await saveToDB('savings_goals', goalData);
+            if (!saved) return;
+            showAlert(editId ? 'แก้ไขเป้าหมายสำเร็จ' : 'สร้างเป้าหมายสำเร็จ');
             closeGoalModal();
             await loadAllData();
             renderCurrentTab();
@@ -2463,7 +2810,7 @@
 
         async function deleteBudget(id) {
             if (confirm('ต้องการลบงบประมาณนี้ใช่หรือไม่?')) {
-                await deleteFromDB('budgets', id);
+                if (!await deleteFromDB('budgets', id)) return;
                 await loadAllData();
                 renderCurrentTab();
                 showAlert('ลบงบประมาณสำเร็จ', 'success');
@@ -2471,7 +2818,7 @@
         }
         async function deleteGoal(id) {
             if (confirm('ต้องการลบเป้าหมายนี้ใช่หรือไม่?')) {
-                await deleteFromDB('savings_goals', id);
+                if (!await deleteFromDB('savings_goals', id)) return;
                 await loadAllData();
                 renderCurrentTab();
                 showAlert('ลบเป้าหมายสำเร็จ', 'success');
