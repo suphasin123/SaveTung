@@ -380,6 +380,22 @@
         </div>
     </div>
 
+    <!-- Monthly income/expense breakdown -->
+    <div id="monthlyBreakdownModal" class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onclick="if (event.target === this) closeMonthlyBreakdown()">
+        <section class="max-h-[90vh] max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-800" role="dialog" aria-modal="true" aria-labelledby="monthlyBreakdownTitle">
+            <div class="mb-3 flex items-center justify-between gap-3">
+                <div>
+                    <h3 id="monthlyBreakdownTitle" class="text-sm font-bold text-slate-800 dark:text-white">รายละเอียดประจำเดือน</h3>
+                    <p id="monthlyBreakdownMonth" class="mt-0.5 text-[10px] text-slate-400"></p>
+                </div>
+                <button type="button" onclick="closeMonthlyBreakdown()" aria-label="ปิด" class="rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><i data-lucide="x" class="h-5 w-5"></i></button>
+            </div>
+            <div id="monthlyBreakdownTotal" class="mb-3 rounded-2xl bg-slate-50 px-3 py-2.5 text-sm font-bold dark:bg-slate-900"></div>
+            <div class="relative mb-3 h-56"><canvas id="monthlyBreakdownChart"></canvas></div>
+            <div id="monthlyBreakdownList" class="space-y-2"></div>
+        </section>
+    </div>
+
     <!-- Custom Alert Notification -->
     <div id="customAlert" class="fixed top-5 left-1/2 transform -translate-x-1/2 z-50 transition-all duration-300 -translate-y-20 opacity-0 max-w-xs w-full px-4 pointer-events-none">
         <div id="alertContent" class="flex items-center space-x-2.5 px-4 py-3 rounded-2xl shadow-xl border text-xs font-medium">
@@ -966,6 +982,12 @@
             return currentUser && accountId ? `savetung-summary-note-${currentUser.id}-${accountId}` : null;
         }
 
+        function resizeSummaryNote(textarea) {
+            if (!textarea) return;
+            textarea.style.height = '0px';
+            textarea.style.height = `${textarea.scrollHeight}px`;
+        }
+
         async function saveSummaryNote(accountId) {
             const input = document.getElementById(`accountNote-${accountId}`);
             const status = document.getElementById(`summaryNoteStatus-${accountId}`);
@@ -1256,6 +1278,105 @@
             };
         }
 
+        let monthlyBreakdownChart = null;
+        let monthlyBreakdownTransactions = [];
+        let monthlyBreakdownGroups = [];
+        let monthlyBreakdownIsIncome = false;
+
+        function selectMonthlyBreakdownCategory(index) {
+            const group = monthlyBreakdownGroups[index];
+            const list = document.getElementById('monthlyBreakdownList');
+            if (!group || !list) return;
+
+            const transactions = monthlyBreakdownTransactions.filter(tx => String(tx.category_id || 'uncategorized') === String(group.id));
+            list.innerHTML = `
+                <div class="mb-2 flex items-center justify-between gap-2">
+                    <h4 class="text-xs font-bold text-slate-700 dark:text-slate-200">${escapeHtml(group.name)}</h4>
+                    <span class="text-xs font-semibold" style="color:${group.color}">${transactions.length} รายการ</span>
+                </div>
+                ${transactions.map(tx => {
+                    const category = db.categories.find(item => String(item.id) === String(tx.category_id));
+                    const date = new Date(tx.transaction_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+                    const description = getTransactionNote(tx) || category?.category_name || 'ไม่ระบุรายการ';
+                    return `<div class="flex items-center justify-between gap-3 border-b border-slate-100 py-2 text-xs last:border-0 dark:border-slate-700"><div class="min-w-0"><div class="truncate font-medium text-slate-700 dark:text-slate-200">${escapeHtml(description)}</div><div class="text-[10px] text-slate-400">${date}</div></div><span class="shrink-0 font-semibold" style="color:${group.color}">${monthlyBreakdownIsIncome ? '+' : '−'}${Number(tx.amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>`;
+                }).join('') || '<div class="py-4 text-center text-xs text-slate-400">ไม่มีรายการในหมวดนี้</div>'}
+            `;
+            document.querySelectorAll('.monthly-breakdown-category').forEach((button, buttonIndex) => {
+                button.setAttribute('aria-pressed', String(buttonIndex === index));
+                button.classList.toggle('ring-2', buttonIndex === index);
+                button.classList.toggle('ring-blue-300', buttonIndex === index);
+            });
+        }
+
+        function openMonthlyBreakdown(type) {
+            const selectedMonth = globalFilter.mode === 'month' ? new Date(globalFilter.currentDate) : new Date();
+            const transactions = db.transactions.filter(tx => {
+                if (!tx.transaction_date) return false;
+                const date = new Date(tx.transaction_date);
+                const sameMonth = date.getFullYear() === selectedMonth.getFullYear() && date.getMonth() === selectedMonth.getMonth();
+                return sameMonth && (type === 'income'
+                    ? tx.transaction_type === 'income'
+                    : ['expense', 'credit_spend'].includes(tx.transaction_type));
+            }).sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
+
+            const isIncome = type === 'income';
+            const title = isIncome ? 'รายละเอียดรายรับ' : 'รายละเอียดรายจ่าย';
+            const color = isIncome ? '#10b981' : '#f43f5e';
+            const formatAmount = amount => Number(amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const monthLabel = selectedMonth.toLocaleDateString('th-TH', { year: 'numeric', month: 'long' });
+            const groups = Object.values(transactions.reduce((result, tx) => {
+                const category = db.categories.find(item => String(item.id) === String(tx.category_id));
+                const key = tx.category_id || 'uncategorized';
+                if (!result[key]) result[key] = { id: key, name: category?.category_name || 'ไม่ระบุหมวดหมู่', color: category?.color || color, total: 0 };
+                result[key].total += Number(tx.amount) || 0;
+                return result;
+            }, {})).sort((a, b) => b.total - a.total);
+            const total = transactions.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+            monthlyBreakdownTransactions = transactions;
+            monthlyBreakdownGroups = groups;
+            monthlyBreakdownIsIncome = isIncome;
+
+            document.getElementById('monthlyBreakdownTitle').textContent = title;
+            document.getElementById('monthlyBreakdownMonth').textContent = monthLabel;
+            document.getElementById('monthlyBreakdownTotal').innerHTML = `<span class="text-slate-500 dark:text-slate-400">ยอด${isIncome ? 'รับ' : 'จ่าย'}รวม</span><span class="float-right" style="color:${color}">${isIncome ? '+' : '−'}${formatAmount(total)} บาท</span>`;
+            document.getElementById('monthlyBreakdownList').innerHTML = groups.length
+                ? '<div class="py-3 text-center text-xs text-slate-400">กดหมวดหมู่ด้านบนเพื่อดูรายการ</div>'
+                : '<div class="py-4 text-center text-xs text-slate-400">ไม่มีรายการในเดือนนี้</div>';
+
+            const chartArea = document.querySelector('#monthlyBreakdownModal .relative.mb-3');
+            if (monthlyBreakdownChart) {
+                monthlyBreakdownChart.destroy();
+                monthlyBreakdownChart = null;
+            }
+            const maxGroupTotal = Math.max(...groups.map(group => group.total), 0);
+            if (groups.length) {
+                chartArea.classList.remove('h-56');
+                chartArea.classList.add('max-h-64', 'overflow-y-auto');
+                chartArea.innerHTML = `<div class="space-y-2">${groups.map((group, index) => {
+                    const percent = maxGroupTotal ? Math.max(3, group.total / maxGroupTotal * 100) : 0;
+                    return `<button type="button" class="monthly-breakdown-category w-full rounded-xl px-2 py-2 text-left transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:hover:bg-slate-700/50" aria-pressed="false" onclick="selectMonthlyBreakdownCategory(${index})"><span class="mb-1 flex items-center justify-between gap-3 text-xs"><span class="flex min-w-0 items-center gap-2"><span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background:${group.color}"></span><span class="truncate font-medium text-slate-700 dark:text-slate-200">${escapeHtml(group.name)}</span></span><span class="shrink-0 font-semibold text-slate-700 dark:text-slate-200">${formatAmount(group.total)} บาท</span></span><span class="block h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700"><span class="block h-full rounded-full" style="width:${percent}%;background:${group.color}"></span></span></button>`;
+                }).join('')}</div>`;
+            } else {
+                chartArea.classList.remove('max-h-64', 'overflow-y-auto');
+                chartArea.classList.add('h-56');
+                chartArea.innerHTML = '<div class="flex h-full items-center justify-center rounded-2xl bg-slate-50 text-xs text-slate-400 dark:bg-slate-900">ไม่มีข้อมูลสำหรับแสดงกราฟ</div>';
+            }
+            const modal = document.getElementById('monthlyBreakdownModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            lucide.createIcons();
+        }
+
+        function closeMonthlyBreakdown() {
+            const modal = document.getElementById('monthlyBreakdownModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            if (monthlyBreakdownChart) {
+                monthlyBreakdownChart.destroy();
+                monthlyBreakdownChart = null;
+            }
+        }
+
         function renderDashboard(container) {
             const netWorth = db.accounts.reduce((sum, acc) => {
                 const balance = Number(acc.balance) || 0;
@@ -1267,6 +1388,16 @@
             const filteredTxs = filterTransactionsByDate(db.transactions);
             const periodIncome = filteredTxs.filter(tx => tx.transaction_type === 'income').reduce((s, t) => s + Number(t.amount), 0);
             const periodExpense = filteredTxs.filter(tx => ['expense', 'credit_spend'].includes(tx.transaction_type)).reduce((s, t) => s + Number(t.amount), 0);
+            const monthlySummaryDate = globalFilter.mode === 'month' ? globalFilter.currentDate : new Date();
+            const monthlyTransactions = db.transactions.filter(tx => {
+                if (!tx.transaction_date) return false;
+                const txDate = new Date(tx.transaction_date);
+                return txDate.getFullYear() === monthlySummaryDate.getFullYear() && txDate.getMonth() === monthlySummaryDate.getMonth();
+            });
+            const monthlyIncome = monthlyTransactions.filter(tx => tx.transaction_type === 'income').reduce((sum, tx) => sum + Number(tx.amount), 0);
+            const monthlyExpense = monthlyTransactions.filter(tx => ['expense', 'credit_spend'].includes(tx.transaction_type)).reduce((sum, tx) => sum + Number(tx.amount), 0);
+            const monthlyNet = monthlyIncome - monthlyExpense;
+            const monthlyLabel = monthlySummaryDate.toLocaleDateString('th-TH', { year: 'numeric', month: 'long' });
 
             const now = new Date();
             const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -1375,26 +1506,28 @@
 
                     ${alertHtml}
 
-                    <!-- Quick transaction shortcuts -->
-                    <section>
-                        <div class="mb-2 flex items-center justify-between px-1">
-                            <h3 class="font-bold text-xs text-slate-500 uppercase tracking-wider">ทางลัดบันทึกรายการ</h3>
-                            <button onclick="switchTab('accounts')" class="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">จัดการบัญชี</button>
+                    <!-- Monthly income and expense summary -->
+                    <section class="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+                        <div class="mb-3 flex items-center justify-between gap-2">
+                            <div>
+                                <h3 class="font-bold text-xs text-slate-800 dark:text-white">สรุปรายรับรายจ่ายประจำเดือน</h3>
+                                <p class="mt-0.5 text-[10px] text-slate-400">${monthlyLabel}</p>
+                            </div>
+                            <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"><i data-lucide="chart-no-axes-column-increasing" class="h-4 w-4"></i></span>
                         </div>
-                        <div class="grid grid-cols-3 gap-2.5">
-                            ${[
-                                { type: 'income', label: 'รับเงิน', icon: 'arrow-down-left', color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-950/30' },
-                                { type: 'expense', label: 'จ่ายเงิน', icon: 'arrow-up-right', color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-950/30' },
-                                { type: 'transfer', label: 'โอนเงิน', icon: 'arrow-left-right', color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-950/30' },
-                                { type: 'credit_spend', label: 'รูดบัตร', icon: 'credit-card', color: 'text-violet-600', bg: 'bg-violet-50 dark:bg-violet-950/30' },
-                                { type: 'credit_payment', label: 'ชำระบัตร', icon: 'wallet', color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-950/30' },
-                                { type: 'saving', label: 'เงินออม', icon: 'piggy-bank', color: 'text-teal-600', bg: 'bg-teal-50 dark:bg-teal-950/30' }
-                            ].map(shortcut => `
-                                <button type="button" onclick="openTransactionShortcut('${shortcut.type}')" class="flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200/80 bg-white p-3 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-800">
-                                    <span class="flex h-10 w-10 items-center justify-center rounded-xl ${shortcut.bg} ${shortcut.color}"><i data-lucide="${shortcut.icon}" class="h-5 w-5"></i></span>
-                                    <span class="text-xs font-semibold text-slate-700 dark:text-slate-200">${shortcut.label}</span>
-                                </button>
-                            `).join('')}
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <button type="button" onclick="openMonthlyBreakdown('income')" aria-label="ดูรายละเอียดรายรับประจำเดือน" class="rounded-2xl bg-emerald-50 p-3 text-left transition hover:ring-2 hover:ring-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 dark:bg-emerald-950/30 dark:hover:ring-emerald-800">
+                                <div class="flex items-center gap-1.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300"><i data-lucide="arrow-down-left" class="h-3.5 w-3.5"></i> รายรับ</div>
+                                <div class="mt-1 text-sm font-bold text-emerald-700 dark:text-emerald-200">+${monthlyIncome.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            </button>
+                            <button type="button" onclick="openMonthlyBreakdown('expense')" aria-label="ดูรายละเอียดรายจ่ายประจำเดือน" class="rounded-2xl bg-rose-50 p-3 text-left transition hover:ring-2 hover:ring-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-300 dark:bg-rose-950/30 dark:hover:ring-rose-800">
+                                <div class="flex items-center gap-1.5 text-[10px] font-medium text-rose-700 dark:text-rose-300"><i data-lucide="arrow-up-right" class="h-3.5 w-3.5"></i> รายจ่าย</div>
+                                <div class="mt-1 text-sm font-bold text-rose-700 dark:text-rose-200">−${monthlyExpense.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            </button>
+                        </div>
+                        <div class="mt-2.5 flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-900">
+                            <span class="text-[10px] font-medium text-slate-500 dark:text-slate-400">คงเหลือสุทธิของเดือน</span>
+                            <span class="text-sm font-bold ${monthlyNet < 0 ? 'text-rose-600 dark:text-rose-300' : 'text-blue-700 dark:text-blue-300'}">${monthlyNet.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     </section>
 
@@ -2296,7 +2429,7 @@
                                                         `}
                                                         <div class="col-span-3 min-w-0 rounded-xl border border-slate-300 bg-white p-2.5 shadow-inner dark:border-slate-500 dark:bg-white">
                                                             <label for="accountNote-${acc.id}" class="mb-1 block text-xs font-semibold text-black">โน้ตสรุปยอด</label>
-                                                            <textarea id="accountNote-${acc.id}" rows="2" maxlength="200" oninput="document.getElementById('summaryNoteStatus-${acc.id}').textContent='ยังไม่ได้บันทึก'" placeholder="เพิ่มโน้ตสรุปยอด..." class="w-full resize-y rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs leading-relaxed text-black outline-none focus:ring-2 focus:ring-blue-200">${escapeHtml(getSummaryNote(acc.id))}</textarea>
+                                                            <textarea id="accountNote-${acc.id}" wrap="soft" oninput="resizeSummaryNote(this); document.getElementById('summaryNoteStatus-${acc.id}').textContent='ยังไม่ได้บันทึก'" placeholder="เพิ่มโน้ตสรุปยอด..." class="summary-note-input w-full resize-none overflow-hidden rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs leading-relaxed text-black outline-none focus:ring-2 focus:ring-blue-200">${escapeHtml(getSummaryNote(acc.id))}</textarea>
                                                             <div class="mt-1.5 flex items-center justify-between gap-2">
                                                                 <span id="summaryNoteStatus-${acc.id}" class="text-[10px] text-slate-500">แก้ไขแล้วกดบันทึก</span>
                                                                 <button id="saveSummaryNote-${acc.id}" type="button" onclick="saveSummaryNote('${acc.id}')" class="rounded-lg bg-blue-600 px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">บันทึกโน้ต</button>
@@ -2363,6 +2496,7 @@
                     </div>
                 </div>
             `;
+            container.querySelectorAll('.summary-note-input').forEach(resizeSummaryNote);
         }
 
         function toggleAccountGroup(type) {
@@ -2530,15 +2664,13 @@
                     const increasesBalance = balanceDelta > 0;
 
                     const d = new Date(t.transaction_date);
-                    const dateStr = d.toLocaleDateString('th-TH', { year: '2-digit', month: 'short', day: 'numeric' });
-                    const timeStr = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                    const dateStr = d.toLocaleDateString('th-TH', { year: '2-digit', month: 'numeric', day: 'numeric' });
 
                     return `
                         <tr class="border-b border-slate-100 dark:border-slate-700/50 text-[11px]">
-                            <td class="py-2.5 px-2 text-slate-400">${dateStr} <span class="text-[9px] block">${timeStr}</span></td>
+                            <td class="py-2.5 px-2 whitespace-nowrap text-slate-400">${dateStr}</td>
                             <td class="py-2.5 px-2 font-medium">
                                 <div>${getTransactionNote(t) || '-'}</div>
-                                <div class="text-[9px] text-slate-400 uppercase">ประเภท: ${t.transaction_type}</div>
                             </td>
                             <td class="py-2.5 px-2 text-right font-semibold ${increasesBalance ? 'text-emerald-600' : 'text-rose-500'}">${balanceDelta > 0 ? '+' : '−'}${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td class="py-2.5 px-2 text-right font-bold text-slate-700 dark:text-slate-200">${runningBalance.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -2567,10 +2699,16 @@
                     <span class="font-bold text-base text-emerald-600">${Math.abs(Number(acc.balance)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse">
+                    <table class="w-full table-fixed text-left border-collapse">
+                        <colgroup>
+                            <col style="width: 16%">
+                            <col style="width: 40%">
+                            <col style="width: 22%">
+                            <col style="width: 22%">
+                        </colgroup>
                         <thead>
                             <tr class="border-b border-slate-200 dark:border-slate-700 text-[10px] text-slate-400 uppercase">
-                                <th class="py-2 px-2">วัน-เวลา</th>
+                                <th class="py-2 px-2">วันที่</th>
                                 <th class="py-2 px-2">รายการ / โน้ต</th>
                                 <th class="py-2 px-2 text-right">เพิ่ม (+) / ลด (−)</th>
                                 <th class="py-2 px-2 text-right">คงเหลือ</th>
