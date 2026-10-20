@@ -1,9 +1,7 @@
 // SaveTung service worker: keeps the app shell and CDN libraries available offline.
 // Supabase API traffic is never cached, so financial data always comes from the server.
-const CACHE = 'savetung-v6';
-const MASCOTS = ['avatar', 'mascot-coin', 'mascot-explorer', 'mascot-hello', 'mascot-jump', 'mascot-star', 'mascot-sticker', 'mascot-wave']
-    .map(name => `assets/${name}.jpg`);
-const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', ...MASCOTS];
+const CACHE = 'savetung-v7';
+const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 const CDN_HOSTS = ['cdn.tailwindcss.com', 'unpkg.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', event => {
