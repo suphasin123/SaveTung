@@ -370,6 +370,7 @@
         let ledgerDateMode = 'month';
         let ledgerCurrentDate = new Date();
         let expandedAccountType = '';
+        const expandedParentAccounts = new Set();
         let creditRemindersExpanded = false;
 
         let globalFilter = {
@@ -743,15 +744,16 @@
             return `data-reorder-list="${tableName}" data-reorder-id="${id}" draggable="${active}" ondragstart="startReorderDrag(event, '${tableName}', '${id}')" ondragover="event.preventDefault()" ondrop="dropReorder(event, '${tableName}', '${id}')" ontouchstart="startReorderTouch(event, '${tableName}', '${id}')" ontouchmove="moveReorderTouch(event)" ontouchend="endReorderTouch(event)" ontouchcancel="endReorderTouch(event)" style="${active ? 'touch-action:none;' : ''}"`;
         }
 
-        // Accounts are only reordered within their own account type; other lists are one group.
+        // Accounts are only reordered among siblings (same type and same main account); other lists are one group.
         function moveReorderItem(tableName, sourceId, targetId, insertAfter) {
             const items = db[tableName];
             const source = items.find(item => String(item.id) === String(sourceId));
             const target = items.find(item => String(item.id) === String(targetId));
             if (!source || !target || source === target) return false;
-            if (tableName === 'accounts' && source.account_type !== target.account_type) return false;
+            const groupKey = item => tableName !== 'accounts' ? '' : `${item.account_type}|${getParentAccount(item)?.account_type === item.account_type ? item.parent_id : ''}`;
+            if (groupKey(source) !== groupKey(target)) return false;
 
-            const inGroup = item => tableName !== 'accounts' || item.account_type === source.account_type;
+            const inGroup = item => groupKey(item) === groupKey(source);
             const group = items.filter(inGroup);
             group.splice(group.indexOf(source), 1);
             group.splice(group.indexOf(target) + (insertAfter ? 1 : 0), 0, source);
@@ -773,6 +775,7 @@
                 event.preventDefault();
                 return;
             }
+            event.stopPropagation();
             draggedReorderItem = { tableName, id: String(id) };
             event.dataTransfer.effectAllowed = 'move';
             event.dataTransfer.setData('text/plain', String(id));
@@ -780,6 +783,7 @@
 
         function dropReorder(event, tableName, targetId) {
             event.preventDefault();
+            event.stopPropagation();
             if (!reorderMode[tableName]) return;
             const sourceId = draggedReorderItem?.tableName === tableName
                 ? draggedReorderItem.id
@@ -793,6 +797,7 @@
             if (!reorderMode[tableName] || event.touches.length !== 1) return;
             touchDraggedReorderItem = { tableName, id: String(id) };
             event.preventDefault();
+            event.stopPropagation();
             event.currentTarget.classList.add('opacity-60', 'ring-2', 'ring-blue-400');
         }
 
@@ -1111,6 +1116,19 @@
             });
         }
 
+        // Exclusive end of the selected period, used to compute balances as of the period's end.
+        function getGlobalFilterEnd() {
+            const d = new Date(globalFilter.currentDate);
+            if (globalFilter.mode === 'today') return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+            if (globalFilter.mode === 'month') return new Date(d.getFullYear(), d.getMonth() + 1, 1);
+            if (globalFilter.mode === 'year') return new Date(d.getFullYear() + 1, 0, 1);
+            if (globalFilter.mode === 'custom' && globalFilter.endDate) {
+                const [endYear, endMonth, endDay] = globalFilter.endDate.split('-').map(Number);
+                return new Date(endYear, endMonth - 1, endDay + 1);
+            }
+            return null;
+        }
+
         function renderDateFilterBar() {
             const modes = [['today', 'วัน'], ['month', 'เดือน'], ['year', 'ปี'], ['custom', 'กำหนดเอง']];
             return `
@@ -1255,7 +1273,7 @@
             return 'move';
         }
 
-        function renderTxRow(tx) {
+        function renderTxRow(tx, contextIds = [], showDate = false) {
             const category = categoryById(tx.category_id) || { category_name: 'ทั่วไป', color: '#94a3b8', icon: 'tag' };
             const from = accountById(tx.wallet_id);
             const to = accountById(tx.to_wallet_id);
@@ -1268,11 +1286,19 @@
                 route += ` → ${to ? escapeHtml(to.account_name) : '—'}${goal ? ` · ${escapeHtml(goal.goal_title)}` : ''}`;
             }
             const date = new Date(tx.transaction_date);
-            const time = Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+            const time = Number.isNaN(date.getTime()) ? '' : `${showDate ? date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) + ' · ' : ''}${date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}`;
             const amountClass = direction === 'in'
                 ? 'text-emerald-600 dark:text-emerald-400'
                 : direction === 'out' ? 'text-slate-900 dark:text-white' : 'text-brand-600 dark:text-brand-300';
-            const sign = direction === 'in' ? '+' : direction === 'out' ? '−' : '';
+            let sign = direction === 'in' ? '+' : direction === 'out' ? '−' : '';
+            let rowAmountClass = amountClass;
+            if (contextIds.length) {
+                // With an account selected, show the amount from that account's point of view.
+                const deltas = getTransactionBalanceDeltas(tx);
+                const delta = contextIds.reduce((sum, id) => sum + (deltas.get(id) || 0), 0);
+                sign = delta > 0 ? '+' : delta < 0 ? '−' : '⇄ ';
+                rowAmountClass = delta > 0 ? 'text-emerald-600 dark:text-emerald-400' : delta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400';
+            }
             const installment = tx.is_installment ? ` · ผ่อน ${escapeHtml(tx.installment_current_month)}/${escapeHtml(tx.installment_total_months)}` : '';
             return `
                 <button type="button" onclick="openTransactionModal('${escapeHtml(tx.id)}')" class="flex w-full items-center gap-3 rounded-2xl px-2 py-2.5 text-left transition hover:bg-slate-50 active:bg-slate-100 dark:hover:bg-white/5 dark:active:bg-white/10">
@@ -1282,7 +1308,7 @@
                         <span class="mt-0.5 block truncate text-[12px] muted">${escapeHtml(TX_TYPE_LABELS[tx.transaction_type] || tx.transaction_type)} · ${route}${installment}</span>
                     </span>
                     <span class="shrink-0 text-right">
-                        <span class="num block text-[15px] font-bold ${amountClass}">${sign}${formatBaht(tx.amount)}</span>
+                        <span class="num block text-[15px] font-bold ${rowAmountClass}">${sign}${formatBaht(tx.amount)}</span>
                         <span class="block text-[11px] muted">${time}</span>
                     </span>
                 </button>
@@ -1307,7 +1333,7 @@
             });
         }
 
-        function renderTxGroups(transactions) {
+        function renderTxGroups(transactions, contextIds = []) {
             const sorted = [...transactions].sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
             const groups = [];
             sorted.forEach(tx => {
@@ -1321,14 +1347,16 @@
             });
             return groups.map(group => {
                 const { income, expense } = summarizePeriod(group.items);
-                const net = income - expense;
+                const net = contextIds.length
+                    ? group.items.reduce((sum, tx) => { const deltas = getTransactionBalanceDeltas(tx); return sum + contextIds.reduce((inner, id) => inner + (deltas.get(id) || 0), 0); }, 0)
+                    : income - expense;
                 return `
                     <section>
                         <div class="mb-1.5 flex items-center justify-between px-2">
                             <h3 class="text-[13px] font-bold text-slate-500 dark:text-slate-400">${escapeHtml(dayLabel(group.date))}</h3>
-                            ${income || expense ? `<span class="num text-[12px] font-semibold ${net < 0 ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}">${net < 0 ? '−' : '+'}${formatBaht(Math.abs(net))}</span>` : ''}
+                            ${net || income || expense ? `<span class="num text-[12px] font-semibold ${net < 0 ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}">${net < 0 ? '−' : '+'}${formatBaht(Math.abs(net))}</span>` : ''}
                         </div>
-                        <div class="card p-1.5">${group.items.map(renderTxRow).join('')}</div>
+                        <div class="card p-1.5">${group.items.map(tx => renderTxRow(tx, contextIds)).join('')}</div>
                     </section>
                 `;
             }).join('');
@@ -1401,6 +1429,169 @@
         let txSearch = '';
 
         let txKindFilter = 'all';
+        let txAccountFilter = '';
+
+        function setTxAccountFilter(id) {
+            txAccountFilter = id;
+            renderTransactionList();
+        }
+
+        // The selected account plus its sub-wallets when it is a main account.
+        function getAccountFilterIds() {
+            const acc = accountById(txAccountFilter);
+            if (!acc) return [];
+            return [acc, ...getChildAccounts(acc.id).filter(child => child.account_type === acc.account_type)].map(item => String(item.id));
+        }
+
+        const FLOW_IN_LABELS = { income: 'รายรับ', transfer: 'โอนเข้า', saving: 'รับเงินออม', credit_payment: 'ชำระบิลเข้าบัตร' };
+        const FLOW_OUT_LABELS = { expense: 'ใช้จ่าย', credit_spend: 'ใช้จ่าย', transfer: 'โอนไปบัญชีอื่น', saving: 'ออมเงิน', credit_payment: 'จ่ายบิลบัตร' };
+
+        function accountFilterSummary(transactions) {
+            const acc = accountById(txAccountFilter);
+            const ids = getAccountFilterIds();
+            const deltaOf = tx => { const deltas = getTransactionBalanceDeltas(tx); return ids.reduce((sum, id) => sum + (deltas.get(id) || 0), 0); };
+            // Where money came from / went to, keyed by transaction type; moves inside a main account net to 0 and drop out.
+            const inLabels = FLOW_IN_LABELS, outLabels = FLOW_OUT_LABELS;
+            const inParts = new Map(), outParts = new Map();
+            // For moves between accounts, also remember which account was on the other side and the notes used.
+            const details = new Map();
+            let inflow = 0, outflow = 0;
+            transactions.forEach(tx => {
+                const delta = deltaOf(tx);
+                if (!delta) return;
+                const parts = delta > 0 ? inParts : outParts;
+                const label = (delta > 0 ? inLabels : outLabels)[tx.transaction_type] || 'อื่นๆ';
+                parts.set(label, (parts.get(label) || 0) + Math.abs(delta));
+                if (['transfer', 'saving', 'credit_payment'].includes(tx.transaction_type)) {
+                    const otherId = delta > 0 ? tx.wallet_id : tx.to_wallet_id;
+                    const key = `${delta > 0 ? 'in' : 'out'}|${label}`;
+                    const byAccount = details.get(key) || new Map();
+                    const entry = byAccount.get(String(otherId)) || { name: accountById(otherId)?.account_name || 'ไม่ทราบบัญชี', type: accountById(otherId)?.account_type, amount: 0, notes: [], items: [] };
+                    entry.amount += Math.abs(delta);
+                    const note = String(getTransactionNote(tx) || '').trim();
+                    if (note && !entry.notes.includes(note)) entry.notes.push(note);
+                    entry.items.push({ note, amount: Math.abs(delta), date: tx.transaction_date });
+                    byAccount.set(String(otherId), entry);
+                    details.set(key, byAccount);
+                }
+                if (delta > 0) inflow += delta; else outflow -= delta;
+            });
+            const periodEnd = getGlobalFilterEnd();
+            const laterDelta = periodEnd ? db.transactions.filter(tx => tx.transaction_date && new Date(tx.transaction_date) >= periodEnd).reduce((sum, tx) => sum + deltaOf(tx), 0) : 0;
+            const balance = ids.reduce((sum, id) => sum + (Number(accountById(id)?.balance) || 0), 0) - laterDelta;
+            const isLiability = LIABILITY_TYPES.includes(acc.account_type);
+            return { acc, inflow, outflow, inParts: [...inParts].map(([label, value]) => [label, value, [...(details.get(`in|${label}`)?.values() || [])]]), outParts: [...outParts].map(([label, value]) => [label, value, [...(details.get(`out|${label}`)?.values() || [])]]), endBalance: isLiability ? Math.abs(balance) : balance, isLiability };
+        }
+
+        function renderAccountFlowSummary(transactions, isMove) {
+            const { acc, inflow, outflow, endBalance, isLiability } = accountFilterSummary(transactions);
+            const change = isLiability ? outflow - inflow : inflow - outflow;
+            const good = (change >= 0) !== isLiability;
+            return `<div class="${isMove ? 'mt-3 border-t border-slate-100 pt-3 dark:border-white/5' : ''}">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="truncate text-[14px] font-bold text-slate-700 dark:text-slate-200">${escapeHtml(acc.account_name)}</div>
+                        <div class="text-[11px] muted">${isLiability ? 'ยอดหนี้' : 'ยอดในบัญชี'} ณ สิ้นช่วงที่เลือก</div>
+                        <div class="num mt-0.5 text-[28px] font-bold leading-tight tracking-tight ${isLiability || endBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}">฿${formatBaht(endBalance)}</div>
+                    </div>
+                    <button type="button" onclick="openAccountLedger('${escapeHtml(acc.id)}')" class="btn-soft shrink-0 !py-1.5 !text-[12px]"><i data-lucide="book-open" class="h-3.5 w-3.5"></i>สมุดบัญชี</button>
+                </div>
+                <div class="mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold ${good ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300'}">
+                    <i data-lucide="${change >= 0 ? 'trending-up' : 'trending-down'}" class="h-3.5 w-3.5"></i>ช่วงนี้${isLiability ? 'หนี้' : 'ยอด'}${change >= 0 ? 'เพิ่มขึ้น' : 'ลดลง'} <span class="num">${formatBaht(Math.abs(change))}</span>
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                    <div class="rounded-2xl bg-emerald-50 p-2.5 dark:bg-emerald-500/10"><div class="text-[12px] font-medium text-emerald-700 dark:text-emerald-300">เงินเข้า</div><div class="num mt-0.5 text-[16px] font-bold text-emerald-700 dark:text-emerald-300">+${formatBaht(inflow)}</div></div>
+                    <div class="rounded-2xl bg-rose-50 p-2.5 dark:bg-rose-500/10"><div class="text-[12px] font-medium text-rose-700 dark:text-rose-300">เงินออก</div><div class="num mt-0.5 text-[16px] font-bold text-rose-700 dark:text-rose-300">−${formatBaht(outflow)}</div></div>
+                </div>
+                <p class="mt-2 text-center text-[11px] muted">รายละเอียดอยู่ด้านล่าง · แตะหัวข้อเพื่อกางดู แตะรายการเพื่อแก้ไข</p>
+            </div>`;
+        }
+
+        // With an account selected, the list is grouped by where money came from / went to instead of by day.
+        // Each group is a collapsible summary line whose body holds the real, editable transaction rows.
+        function renderAccountFlowList(transactions, ids) {
+            const deltaOf = tx => { const deltas = getTransactionBalanceDeltas(tx); return ids.reduce((sum, id) => sum + (deltas.get(id) || 0), 0); };
+            const sections = { in: new Map(), out: new Map() };
+            const internal = [];
+            let inflow = 0, outflow = 0;
+            transactions.forEach(tx => {
+                const delta = deltaOf(tx);
+                if (!delta) { internal.push(tx); return; }
+                const dir = delta > 0 ? 'in' : 'out';
+                if (delta > 0) inflow += delta; else outflow -= delta;
+                const label = (dir === 'in' ? FLOW_IN_LABELS : FLOW_OUT_LABELS)[tx.transaction_type] || 'อื่นๆ';
+                const part = sections[dir].get(label) || { total: 0, txs: [], others: new Map() };
+                part.total += Math.abs(delta);
+                if (['transfer', 'saving', 'credit_payment'].includes(tx.transaction_type)) {
+                    const otherId = String(dir === 'in' ? tx.wallet_id : tx.to_wallet_id);
+                    const other = part.others.get(otherId) || { acc: accountById(otherId), total: 0, txs: [] };
+                    other.total += Math.abs(delta);
+                    other.txs.push(tx);
+                    part.others.set(otherId, other);
+                } else {
+                    part.txs.push(tx);
+                }
+                sections[dir].set(label, part);
+            });
+            const byNewest = list => [...list].sort((x, y) => new Date(y.transaction_date) - new Date(x.transaction_date));
+            const rows = list => byNewest(list).map(tx => renderTxRow(tx, ids, true)).join('');
+
+            const group = (iconHtml, title, subtitle, amount, list) => `
+                <details class="group rounded-2xl">
+                    <summary class="flex cursor-pointer list-none items-center gap-2.5 rounded-2xl px-2 py-2 transition hover:bg-slate-50 dark:hover:bg-white/5">
+                        ${iconHtml}
+                        <span class="min-w-0 flex-1">
+                            <span class="block truncate text-[14px] font-semibold text-slate-800 dark:text-slate-100">${title}</span>
+                            <span class="block truncate text-[11px] muted">${subtitle}</span>
+                        </span>
+                        <span class="num shrink-0 text-[14px] font-bold text-slate-800 dark:text-slate-100">${formatBaht(amount)}</span>
+                        <i data-lucide="chevron-down" class="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180"></i>
+                    </summary>
+                    <div class="mb-1 ml-3 border-l-2 border-slate-100 pl-1 dark:border-white/10">${rows(list)}</div>
+                </details>`;
+
+            const section = (title, icon, total, parts, tone, arrow) => {
+                if (!parts.size) return '';
+                return `
+                <section class="card p-3">
+                    <div class="mb-1 flex items-center justify-between gap-2 px-1">
+                        <span class="flex items-center gap-2 text-[15px] font-bold ${tone.text}"><span class="flex h-7 w-7 items-center justify-center rounded-lg ${tone.bg}"><i data-lucide="${icon}" class="h-4 w-4"></i></span>${title}</span>
+                        <span class="num text-[16px] font-bold ${tone.text}">${tone.sign}${formatBaht(total)}</span>
+                    </div>
+                    <div class="divide-y divide-slate-100 dark:divide-white/5">${[...parts].sort((x, y) => y[1].total - x[1].total).map(([label, part]) => {
+                        const percent = total > 0 ? Math.round(part.total / total * 100) : 0;
+                        const others = [...part.others.values()].sort((x, y) => y.total - x.total);
+                        return `
+                        <div class="py-2">
+                            <div class="flex items-center justify-between gap-2 px-1 text-[13px]">
+                                <span class="font-semibold text-slate-600 dark:text-slate-300">${label}</span>
+                                <span class="flex items-center gap-2"><span class="text-[11px] muted">${percent}%</span><span class="num font-semibold text-slate-800 dark:text-slate-100">${formatBaht(part.total)}</span></span>
+                            </div>
+                            <div class="mx-1 mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10"><div class="h-full rounded-full ${tone.bar}" style="width:${Math.max(3, percent)}%"></div></div>
+                            <div class="mt-1.5">
+                                ${others.map(other => {
+                                    const meta = ACCOUNT_TYPE_META[other.acc?.account_type] || ACCOUNT_TYPE_META.cash;
+                                    const note = String(getTransactionNote(other.txs[0]) || '').trim();
+                                    return group(`<span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${meta.tone}"><i data-lucide="${meta.icon}" class="h-4 w-4"></i></span>`,
+                                        `${arrow} ${escapeHtml(other.acc?.account_name || 'ไม่ทราบบัญชี')}`,
+                                        other.txs.length > 1 ? `${other.txs.length} ครั้ง` : escapeHtml(note || '1 ครั้ง'),
+                                        other.total, other.txs);
+                                }).join('')}
+                                ${part.txs.length ? group(`<span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${tone.bg} ${tone.text}"><i data-lucide="list" class="h-4 w-4"></i></span>`,
+                                    `ดูรายการ${label}`, `${part.txs.length} รายการ`, part.total, part.txs) : ''}
+                            </div>
+                        </div>`;
+                    }).join('')}</div>
+                </section>`;
+            };
+
+            return [
+                section('เงินเข้ามาจากไหน', 'arrow-down-left', inflow, sections.in, { bg: 'bg-emerald-100 dark:bg-emerald-500/15', text: 'text-emerald-700 dark:text-emerald-300', bar: 'bg-emerald-500', sign: '+' }, '←'),
+                section('เงินออกไปไหน', 'arrow-up-right', outflow, sections.out, { bg: 'bg-rose-100 dark:bg-rose-500/15', text: 'text-rose-700 dark:text-rose-300', bar: 'bg-rose-500', sign: '−' }, '→'),
+                internal.length ? `<section class="card p-3">${group(`<span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-300"><i data-lucide="arrow-left-right" class="h-4 w-4"></i></span>`,
+                    'ย้ายเงินระหว่างกระเป๋าย่อย', `${internal.length} รายการ · ยอดรวมไม่เปลี่ยน`, internal.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0), internal)}</section>` : ''
+            ].join('');
+        }
 
         function setTxKindFilter(kind) {
             txKindFilter = kind;
@@ -1412,10 +1603,12 @@
             const listEl = document.getElementById('txList');
             if (!summaryEl || !listEl) return;
 
+            if (txAccountFilter && !accountById(txAccountFilter)) txAccountFilter = '';
             const periodTxs = filterTransactionsByDate(db.transactions);
             const query = txSearch.trim().toLowerCase();
             const visible = periodTxs
                 .filter(tx => txKindFilter === 'all' || txDirection(tx) === txKindFilter)
+                .filter(tx => !txAccountFilter || getAccountFilterIds().some(id => id === String(tx.wallet_id) || id === String(tx.to_wallet_id)))
                 .filter(tx => {
                     if (!query) return true;
                     const category = categoryById(tx.category_id);
@@ -1447,6 +1640,8 @@
                 }
             });
             const { income, expense } = summarizePeriod(visible);
+            const sumOf = types => visible.filter(tx => types.includes(tx.transaction_type)).reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+            const isMove = txKindFilter === 'move';
             const channel = (icon, tone, title, rows) => `
                 <div class="rounded-2xl bg-slate-50 p-3 dark:bg-white/5">
                     <div class="mb-1.5 flex items-center gap-1.5 text-[12px] font-bold ${tone}"><i data-lucide="${icon}" class="h-3.5 w-3.5"></i>${title}</div>
@@ -1456,12 +1651,18 @@
 
             summaryEl.innerHTML = `
                 <section class="card p-4">
-                    <div class="grid grid-cols-3 gap-2 text-center">
-                        <div><div class="text-[12px] muted">รับ</div><div class="num text-[15px] font-bold text-emerald-600 dark:text-emerald-400">+${formatBaht(income)}</div></div>
-                        <div><div class="text-[12px] muted">จ่าย</div><div class="num text-[15px] font-bold text-rose-600 dark:text-rose-400">−${formatBaht(expense)}</div></div>
-                        <div><div class="text-[12px] muted">สุทธิ</div><div class="num text-[15px] font-bold ${income - expense < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}">${formatBaht(income - expense)}</div></div>
-                    </div>
-                    <details class="group mt-3 border-t border-slate-100 pt-2 dark:border-white/5">
+                    ${isMove ? `<div class="grid grid-cols-3 gap-2 text-center">
+                        <div><div class="text-[12px] muted">โอน</div><div class="num text-[15px] font-bold text-sky-600 dark:text-sky-400">${formatBaht(sumOf(['transfer']))}</div></div>
+                        <div><div class="text-[12px] muted">ออม</div><div class="num text-[15px] font-bold text-teal-600 dark:text-teal-400">${formatBaht(sumOf(['saving']))}</div></div>
+                        <div><div class="text-[12px] muted">จ่ายบิลบัตร</div><div class="num text-[15px] font-bold text-amber-600 dark:text-amber-400">${formatBaht(sumOf(['credit_payment']))}</div></div>
+                    </div>` : txAccountFilter ? '' : `<div class="mb-2.5 flex items-baseline justify-between gap-2"><span class="text-[14px] font-bold text-slate-800 dark:text-slate-100">รายรับ–รายจ่ายช่วงนี้</span><span class="text-[11px] muted">ไม่รวมการโอนระหว่างบัญชี</span></div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="rounded-2xl bg-emerald-50 p-2.5 dark:bg-emerald-500/10"><div class="text-[12px] font-medium text-emerald-700 dark:text-emerald-300">รายรับ</div><div class="num mt-0.5 text-[15px] font-bold text-emerald-700 dark:text-emerald-300">+${formatBaht(income)}</div></div>
+                        <div class="rounded-2xl bg-rose-50 p-2.5 dark:bg-rose-500/10"><div class="text-[12px] font-medium text-rose-700 dark:text-rose-300">ใช้จ่าย</div><div class="num mt-0.5 text-[15px] font-bold text-rose-700 dark:text-rose-300">−${formatBaht(expense)}</div></div>
+                        <div class="rounded-2xl bg-slate-100 p-2.5 dark:bg-white/5"><div class="text-[12px] font-medium text-slate-600 dark:text-slate-300">เหลือ</div><div class="num mt-0.5 text-[15px] font-bold ${income - expense < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}">${formatBaht(income - expense)}</div></div>
+                    </div>`}
+                    ${txAccountFilter ? renderAccountFlowSummary(visible, isMove) : ''}
+                    ${txAccountFilter ? '' : `<details class="group mt-3 border-t border-slate-100 pt-2 dark:border-white/5">
                         <summary class="flex cursor-pointer list-none items-center justify-between rounded-xl px-1 py-1.5 text-[13px] font-semibold text-slate-600 dark:text-slate-300">
                             สรุปตามช่องทางการเงิน
                             <i data-lucide="chevron-down" class="h-4 w-4 transition group-open:rotate-180"></i>
@@ -1472,11 +1673,11 @@
                             ${channel('credit-card', 'text-violet-700 dark:text-violet-300', 'บัตร', [['รูด', creditSpend, 'text-rose-600 dark:text-rose-400'], ['จ่ายบิล', creditPayment, 'text-emerald-600 dark:text-emerald-400']])}
                         </div>
                         <div class="mt-2 flex justify-between px-1 text-[12px]"><span class="muted">โอนระหว่างบัญชี (ไม่นับรับ/จ่าย)</span><span class="num font-semibold text-brand-600 dark:text-brand-300">${formatBaht(transferTotal)}</span></div>
-                    </details>
+                    </details>`}
                 </section>
             `;
 
-            listEl.innerHTML = renderTxGroups(visible) || `<div class="card">${emptyState('receipt-text',
+            listEl.innerHTML = (txAccountFilter ? renderAccountFlowList(visible, getAccountFilterIds()) : renderTxGroups(visible)) || `<div class="card">${emptyState('receipt-text',
                 query || txKindFilter !== 'all' ? 'ไม่พบรายการที่ตรงกับตัวกรอง' : 'ยังไม่มีรายการในช่วงเวลานี้',
                 query || txKindFilter !== 'all' ? 'ลองเปลี่ยนคำค้นหาหรือประเภท' : 'กดปุ่ม + เพื่อบันทึกรายการ')}</div>`;
             lucide.createIcons();
@@ -1517,10 +1718,19 @@
             renderTxForm();
         }
 
+        // Sub-wallets point at a main account through parent_id; the main account's total is its own balance plus its children.
+        function getParentAccount(acc) {
+            return acc && acc.parent_id ? db.accounts.find(other => String(other.id) === String(acc.parent_id)) || null : null;
+        }
+
+        function getChildAccounts(id) {
+            return db.accounts.filter(account => String(account.parent_id) === String(id));
+        }
+
         function renderAccountOptions(accounts) {
             const groupLabels = { cash: 'เงินสด', bank: 'เงินฝากธนาคาร', credit: 'บัตรเครดิต', investment: 'การลงทุน', loan: 'หนี้สิน' };
             return ACCOUNT_TYPE_ORDER.map(accountType => {
-                const matching = accounts.filter(account => account.account_type === accountType);
+                const matching = accounts.filter(account => account.account_type === accountType && !getChildAccounts(account.id).length);
                 if (!matching.length) return '';
                 return `<optgroup label="${groupLabels[accountType]}">${matching.map(account => `<option class="account-select-option" value="${escapeHtml(account.id)}">${escapeHtml(account.account_name)}</option>`).join('')}</optgroup>`;
             }).join('');
@@ -2092,18 +2302,29 @@
         }
 
         function renderTransactions(container) {
-            const filters = [['all', 'ทั้งหมด'], ['out', 'รายจ่าย'], ['in', 'รายรับ'], ['move', 'โอน / ออม / บัตร']];
+            const filters = [['all', 'ทั้งหมด', 'list'], ['out', 'รายจ่าย', 'arrow-up-right'], ['in', 'รายรับ', 'arrow-down-left'], ['move', 'โอน / ออม / บัตร', 'arrow-left-right']];
             container.innerHTML = `
                 <div class="fade-in space-y-4">
                     ${renderDateFilterBar()}
                     <section class="space-y-2.5">
                         <label class="relative block">
+                            <span class="pointer-events-none absolute left-3.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 text-[13px] font-semibold text-slate-500 dark:text-slate-400"><i data-lucide="wallet-cards" class="h-[18px] w-[18px]"></i>ดูบัญชี</span>
+                            <select id="txAccountFilter" onchange="setTxAccountFilter(this.value)" aria-label="เลือกบัญชีที่จะดู" class="field !rounded-2xl !bg-white !pl-[92px] font-semibold dark:!bg-slate-900 ${txAccountFilter ? '!ring-2 !ring-brand-300 dark:!ring-brand-500/40' : ''}">
+                                <option value="">ทุกบัญชี</option>
+                                ${ACCOUNT_TYPE_ORDER.map(type => {
+                                    const accounts = db.accounts.filter(acc => acc.account_type === type);
+                                    if (!accounts.length) return '';
+                                    return `<optgroup label="${ACCOUNT_TYPE_META[type].label}">${accounts.map(acc => `<option value="${escapeHtml(acc.id)}" ${String(acc.id) === String(txAccountFilter) ? 'selected' : ''}>${escapeHtml(acc.account_name)}${getChildAccounts(acc.id).length ? ' (รวมกระเป๋าย่อย)' : ''}</option>`).join('')}</optgroup>`;
+                                }).join('')}
+                            </select>
+                        </label>
+                        <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
+                            ${filters.map(([kind, label, icon]) => `<button type="button" onclick="setTxKindFilter('${kind}')" aria-pressed="${txKindFilter === kind}" class="flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition ${txKindFilter === kind ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-white/10'}"><i data-lucide="${icon}" class="h-3.5 w-3.5"></i>${label}</button>`).join('')}
+                        </div>
+                        <label class="relative block">
                             <i data-lucide="search" class="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400"></i>
                             <input id="txSearchInput" type="search" value="${escapeHtml(txSearch)}" oninput="txSearch = this.value; renderTransactionList()" placeholder="ค้นหาโน้ต หมวดหมู่ หรือบัญชี" aria-label="ค้นหารายการ" class="field !rounded-2xl !bg-white !pl-10 dark:!bg-slate-900">
                         </label>
-                        <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
-                            ${filters.map(([kind, label]) => `<button type="button" onclick="setTxKindFilter('${kind}')" aria-pressed="${txKindFilter === kind}" class="shrink-0 rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition ${txKindFilter === kind ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-white/10'}">${label}</button>`).join('')}
-                        </div>
                     </section>
                     <div id="txSummary"></div>
                     <div id="txList" class="space-y-4"></div>
@@ -2123,6 +2344,7 @@
             document.getElementById('installmentFields').classList.add('hidden');
             const tx = id ? db.transactions.find(item => String(item.id) === String(id)) : null;
             document.getElementById('editTxId').value = tx ? tx.id : '';
+            pendingTxOpId = null;
             document.getElementById('txModalTitle').textContent = tx ? 'แก้ไขรายการ' : 'บันทึกรายการ';
             const deleteButton = document.getElementById('txDeleteBtn');
             deleteButton.classList.toggle('hidden', !tx);
@@ -2317,6 +2539,66 @@
             return deltas;
         }
 
+        // --- Retry-safe saving: one database call per save, tagged with an op id so retries never apply twice ---
+        let pendingTxOpId = null;
+
+        function newOpId() {
+            if (window.crypto?.randomUUID) return crypto.randomUUID();
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                const r = Math.random() * 16 | 0;
+                return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+            });
+        }
+
+        const isNetworkError = error => !error?.code && /fetch|network|timeout|load failed/i.test(error?.message || '');
+
+        // Returns 'ok', 'legacy' (database function not installed yet) or false.
+        async function runTransactionOp(opId, action, txId, txData, balanceDeltas, goalDeltas) {
+            const toObject = deltas => Object.fromEntries([...deltas].filter(([, delta]) => delta).map(([id, delta]) => [String(id), delta]));
+            const params = {
+                p_op_id: opId,
+                p_action: action,
+                p_tx_id: txId ? String(txId) : null,
+                p_tx: txData || {},
+                p_balance_deltas: toObject(balanceDeltas),
+                p_goal_deltas: toObject(goalDeltas)
+            };
+            for (let attempt = 0; attempt < 3; attempt++) {
+                if (attempt) await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+                let result;
+                try {
+                    result = await supabaseClient.rpc('apply_transaction_op', params);
+                } catch (error) {
+                    result = { error };
+                }
+                const { data, error } = result;
+                if (!error) {
+                    setSyncStatus('online');
+                    if (data === 'duplicate') showAlert('รายการนี้บันทึกไว้แล้ว ไม่ได้บันทึกซ้ำ');
+                    return 'ok';
+                }
+                if (error.code === 'PGRST202' || /apply_transaction_op/.test(error.message || '') && /not find|does not exist/i.test(error.message || '')) return 'legacy';
+                if (!isNetworkError(error)) {
+                    setSyncStatus('error');
+                    showAlert('บันทึกไม่สำเร็จ: ' + error.message, 'error');
+                    return false;
+                }
+            }
+            setSyncStatus('error');
+            showAlert('เน็ตไม่เสถียร ยังไม่แน่ใจว่าบันทึกแล้วหรือยัง · กดบันทึกอีกครั้งได้เลย ระบบจะไม่บันทึกซ้ำ', 'error');
+            return false;
+        }
+
+        // saved_periods depends on the goal's settings, so it is recalculated after the amount changed in the database.
+        async function syncSavedPeriods(goalIds) {
+            for (const goalId of goalIds) {
+                const goal = db.savings_goals.find(item => String(item.id) === String(goalId));
+                if (!goal) continue;
+                const savedPeriods = calculateSavedPeriods(goal);
+                if (savedPeriods !== Number(goal.saved_periods)) await updateInDB('savings_goals', goal.id, { saved_periods: savedPeriods });
+            }
+        }
+
         async function applySavingsGoalDeltas(deltas) {
             const applied = [];
             const entries = [...deltas].filter(([, delta]) => delta);
@@ -2470,6 +2752,26 @@
             };
             if (oldTx) mergeSavingsGoalDelta(oldTx, -1);
             mergeSavingsGoalDelta(txData, 1);
+
+            // Same op id until this save succeeds, so pressing save again after a timeout can't duplicate.
+            pendingTxOpId = pendingTxOpId || newOpId();
+            const opResult = await runTransactionOp(pendingTxOpId, editId ? 'update' : 'insert', editId, txData, balanceDeltas, savingsGoalDeltas);
+            if (opResult === 'ok') {
+                pendingTxOpId = null;
+                closeTransactionModal();
+                await loadAllData(['accounts', 'transactions', 'savings_goals']);
+                await syncSavedPeriods(savingsGoalDeltas.keys());
+                renderCurrentTab();
+                showAlert(editId ? 'แก้ไขรายการสำเร็จ' : 'บันทึกรายการสำเร็จ');
+                return;
+            }
+            if (opResult !== 'legacy') {
+                await loadAllData(['accounts', 'transactions', 'savings_goals']);
+                renderCurrentTab();
+                return;
+            }
+
+            // Fallback until supabase/transaction_ops.sql has been run: the old step-by-step save.
             if (!await applySavingsGoalDeltas(savingsGoalDeltas)) return;
             if (!await applyTransactionBalanceDeltas(balanceDeltas)) {
                 await applySavingsGoalDeltas(new Map([...savingsGoalDeltas].map(([goalId, delta]) => [goalId, -delta])));
@@ -2517,6 +2819,22 @@
                 const goalDeltas = contribution?.goalId
                     ? new Map([[contribution.goalId, -contribution.amount]])
                     : new Map();
+
+                const opResult = await runTransactionOp(newOpId(), 'delete', id, null, balanceDeltas, goalDeltas);
+                if (opResult === 'ok') {
+                    await loadAllData(['accounts', 'transactions', 'savings_goals']);
+                    await syncSavedPeriods(goalDeltas.keys());
+                    renderCurrentTab();
+                    showAlert('ลบรายการสำเร็จ', 'success');
+                    return;
+                }
+                if (opResult !== 'legacy') {
+                    await loadAllData(['accounts', 'transactions', 'savings_goals']);
+                    renderCurrentTab();
+                    return;
+                }
+
+                // Fallback until supabase/transaction_ops.sql has been run.
                 if (!await applySavingsGoalDeltas(goalDeltas)) return;
                 if (!await applyTransactionBalanceDeltas(balanceDeltas)) {
                     await applySavingsGoalDeltas(new Map([...goalDeltas].map(([goalId, delta]) => [goalId, -delta])));
@@ -2567,7 +2885,7 @@
                             <i data-lucide="chevron-down" class="h-5 w-5 shrink-0 text-slate-400 transition ${isExpanded ? 'rotate-180' : ''}"></i>
                         </button>
                         ${isExpanded ? `
-                            <div id="accountList-${type}" class="space-y-2 px-3 pb-3">${accounts.map(renderAccountCard).join('')}</div>
+                            <div id="accountList-${type}" class="space-y-2 px-3 pb-3">${accounts.filter(account => getParentAccount(account)?.account_type !== type).map((account, index) => getChildAccounts(account.id).length ? renderParentAccountCard(account, index) : renderAccountCard(account, index)).join('')}</div>
                         ` : ''}
                     </section>
                 `;
@@ -2632,6 +2950,11 @@
                                     <option value="loan">หนี้สิน / เงินกู้</option>
                                 </select>
                             </div>
+                            <div id="accParentField">
+                                <label for="accParentId" class="label">อยู่ใต้บัญชีหลัก (ไม่บังคับ)</label>
+                                <select id="accParentId" class="field"></select>
+                                <p class="mt-1 text-[12px] muted">เช่น เลือก "Make" เพื่อให้กระเป๋านี้รวมยอดอยู่ใต้ Make</p>
+                            </div>
                             <div>
                                 <label for="accBalance" class="label">ยอดเงิน / ยอดหนี้ปัจจุบัน (บาท)</label>
                                 <input type="number" step="0.01" inputmode="decimal" id="accBalance" required value="0" class="field num">
@@ -2665,6 +2988,53 @@
             renderCurrentTab();
         }
 
+        function renderParentAccountCard(acc, index) {
+            const children = getChildAccounts(acc.id).filter(child => child.account_type === acc.account_type);
+            const isLiability = LIABILITY_TYPES.includes(acc.account_type);
+            const total = children.reduce((sum, child) => sum + (Number(child.balance) || 0), Number(acc.balance) || 0);
+            const displayTotal = isLiability ? Math.abs(total) : total;
+            const isExpanded = expandedParentAccounts.has(String(acc.id));
+            const reordering = reorderMode.accounts;
+            return `
+                <div ${reorderAttrs('accounts', acc.id)} class="account-item rounded-2xl bg-slate-50 p-1.5 dark:bg-white/[0.04] ${reordering ? 'cursor-grab ring-1 ring-brand-200 dark:ring-brand-500/30' : ''}">
+                    <div class="flex items-center gap-2.5 px-1.5 py-1.5">
+                        ${reordering ? `<span class="reorder-number flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-100 text-[12px] font-bold text-brand-700 dark:bg-brand-500/20 dark:text-brand-200">${index + 1}</span>` : ''}
+                        <button type="button" onclick="toggleParentAccount('${escapeHtml(acc.id)}')" aria-expanded="${isExpanded}" class="flex min-w-0 flex-1 items-center gap-3 text-left">
+                            <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-white/10"><i data-lucide="folder-open" class="h-4 w-4"></i></span>
+                            <span class="min-w-0 flex-1">
+                                <span class="block truncate text-[15px] font-bold text-slate-900 dark:text-white">${escapeHtml(acc.account_name)}</span>
+                                <span class="block text-[12px] muted">${children.length} กระเป๋า</span>
+                            </span>
+                            <span class="num shrink-0 text-[15px] font-bold ${isLiability || total < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}">${formatBaht(displayTotal)}</span>
+                            <i data-lucide="chevron-down" class="h-4 w-4 shrink-0 text-slate-400 transition ${isExpanded ? 'rotate-180' : ''}"></i>
+                        </button>
+                        ${reordering ? '<i data-lucide="grip-vertical" class="h-5 w-5 shrink-0 text-slate-400"></i>' : `<button type="button" onclick="openAccountMenu('${escapeHtml(acc.id)}')" class="-mr-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-slate-500 transition active:bg-slate-200 dark:text-slate-400 dark:active:bg-white/10" aria-label="ตัวเลือกบัญชี ${escapeHtml(acc.account_name)}"><i data-lucide="ellipsis-vertical" class="h-5 w-5"></i></button>`}
+                    </div>
+                    ${isExpanded || reordering ? `<div class="space-y-1.5 border-l-2 border-slate-200 pl-2 ml-3 dark:border-white/10">${children.map(renderAccountCard).join('')}</div>` : ''}
+                </div>
+            `;
+        }
+
+        function toggleParentAccount(id) {
+            const key = String(id);
+            if (expandedParentAccounts.has(key)) expandedParentAccounts.delete(key);
+            else expandedParentAccounts.add(key);
+            renderCurrentTab();
+        }
+
+        function refreshParentAccountOptions() {
+            const select = document.getElementById('accParentId');
+            if (!select) return;
+            const editId = document.getElementById('editAccId').value;
+            const type = document.getElementById('accType').value;
+            const hasChildren = editId && getChildAccounts(editId).length > 0;
+            document.getElementById('accParentField').classList.toggle('hidden', !!hasChildren);
+            const candidates = db.accounts.filter(account => account.account_type === type && !account.parent_id && String(account.id) !== String(editId));
+            const previous = select.value;
+            select.innerHTML = '<option value="">— ไม่มี (เป็นบัญชีหลัก) —</option>' + candidates.map(account => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.account_name)}</option>`).join('');
+            select.value = candidates.some(account => String(account.id) === previous) ? previous : '';
+        }
+
         function openAccountModal(id = null) {
             if (id) {
                 const acc = db.accounts.find(a => a.id === id);
@@ -2673,18 +3043,23 @@
                     document.getElementById('accName').value = acc.account_name;
                     document.getElementById('accType').value = acc.account_type;
                     document.getElementById('accBalance').value = ['credit', 'loan'].includes(acc.account_type) ? Math.abs(Number(acc.balance)) : acc.balance;
+                    document.getElementById('accBalance').dataset.original = document.getElementById('accBalance').value;
                     document.getElementById('accCreditLimit').value = acc.credit_limit || 50000;
                     document.getElementById('accStatementDate').value = acc.statement_date || 25;
                     document.getElementById('accDueDate').value = acc.due_date || 10;
                     document.getElementById('accModalTitle').innerHTML = '<i data-lucide="edit-3" class="h-5 w-5 text-brand-500"></i> แก้ไขบัญชี';
+                    onAccountTypeChange();
+                    document.getElementById('accParentId').value = acc.parent_id || '';
                 }
             } else {
                 document.getElementById('editAccId').value = '';
                 document.getElementById('accName').value = '';
                 document.getElementById('accBalance').value = '0';
+                document.getElementById('accBalance').dataset.original = '';
                 document.getElementById('accModalTitle').innerHTML = '<i data-lucide="credit-card" class="h-5 w-5 text-brand-500"></i> เพิ่มบัญชี / กระเป๋าเงิน';
+                onAccountTypeChange();
+                document.getElementById('accParentId').value = '';
             }
-            onAccountTypeChange();
             document.getElementById('accModal').classList.remove('hidden');
             lucide.createIcons();
         }
@@ -2695,20 +3070,25 @@
             const creditFields = document.getElementById('creditFields');
             if (type === 'credit') creditFields.classList.remove('hidden');
             else creditFields.classList.add('hidden');
+            refreshParentAccountOptions();
         }
 
         async function handleSaveAccount(e) {
             e.preventDefault();
             const editId = document.getElementById('editAccId').value;
             const type = document.getElementById('accType').value;
-            const enteredBalance = Number(document.getElementById('accBalance').value);
+            const balanceInput = document.getElementById('accBalance');
+            const enteredBalance = Number(balanceInput.value);
+            // Editing name/type must not push back a balance that may be stale; only send it when it was changed here.
+            const balanceChanged = !editId || roundMoney(enteredBalance) !== roundMoney(Number(balanceInput.dataset.original));
             const accData = {
                 account_name: document.getElementById('accName').value,
                 account_type: type,
-                balance: ['credit', 'loan'].includes(type) ? -Math.abs(enteredBalance) : enteredBalance,
+                ...(balanceChanged ? { balance: ['credit', 'loan'].includes(type) ? -Math.abs(enteredBalance) : enteredBalance } : {}),
                 credit_limit: type === 'credit' ? Number(document.getElementById('accCreditLimit').value) : 0,
                 statement_date: type === 'credit' ? Number(document.getElementById('accStatementDate').value) : null,
-                due_date: type === 'credit' ? Number(document.getElementById('accDueDate').value) : null
+                due_date: type === 'credit' ? Number(document.getElementById('accDueDate').value) : null,
+                parent_id: document.getElementById('accParentId').value || null
             };
 
             const saved = editId
@@ -2796,7 +3176,14 @@
             }
             ledgerAccountId = accountId;
 
-            const allAccTxs = db.transactions.filter(t => String(t.wallet_id) === String(accountId) || String(t.to_wallet_id) === String(accountId));
+            // A main account's ledger covers its own transactions plus every sub-wallet's.
+            const children = getChildAccounts(acc.id).filter(child => child.account_type === acc.account_type);
+            const memberIds = [acc.id, ...children.map(child => child.id)].map(String);
+            const isGroup = children.length > 0;
+            const deltaOf = t => { const deltas = getTransactionBalanceDeltas(t); return memberIds.reduce((sum, id) => sum + (deltas.get(id) || 0), 0); };
+            const walletLabel = id => { const wallet = db.accounts.find(a => String(a.id) === String(id)); return wallet ? wallet.account_name : ''; };
+            const groupBalance = memberIds.reduce((sum, id) => sum + (Number(db.accounts.find(a => String(a.id) === id)?.balance) || 0), 0);
+            const allAccTxs = db.transactions.filter(t => memberIds.includes(String(t.wallet_id)) || memberIds.includes(String(t.to_wallet_id)));
             allAccTxs.sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
             const { start: rangeStart, end: rangeEnd, label: rangeLabel } = getLedgerDateRange();
             const accTxs = allAccTxs.filter(transaction => {
@@ -2806,15 +3193,15 @@
 
             let totalNetChange = 0;
             allAccTxs.forEach(t => {
-                totalNetChange += getTransactionBalanceDeltas(t).get(accountId) || 0;
+                totalNetChange += deltaOf(t);
             });
 
             // หนี้สินเก็บยอดติดลบในฐานข้อมูล แต่แสดงยอดหนี้เป็นจำนวนบวก
             const isLiability = ['credit', 'loan'].includes(acc.account_type);
-            const initialStartBalance = Number(acc.balance) - totalNetChange;
+            const initialStartBalance = groupBalance - totalNetChange;
             const balanceBeforeRange = initialStartBalance + allAccTxs
                 .filter(transaction => new Date(transaction.transaction_date) < rangeStart)
-                .reduce((sum, transaction) => sum + (getTransactionBalanceDeltas(transaction).get(accountId) || 0), 0);
+                .reduce((sum, transaction) => sum + deltaOf(transaction), 0);
 
             let runningBalance = isLiability ? -balanceBeforeRange : balanceBeforeRange;
             let rowsHtml = '';
@@ -2824,10 +3211,16 @@
             } else {
                 rowsHtml = accTxs.map(t => {
                     const amount = Number(t.amount);
-                    const accountDelta = getTransactionBalanceDeltas(t).get(accountId) || 0;
+                    const accountDelta = deltaOf(t);
                     const balanceDelta = isLiability ? -accountDelta : accountDelta;
                     runningBalance += balanceDelta;
                     const increasesBalance = balanceDelta > 0;
+                    const fromInside = memberIds.includes(String(t.wallet_id));
+                    const toInside = t.to_wallet_id && memberIds.includes(String(t.to_wallet_id));
+                    const internalMove = isGroup && fromInside && toInside && balanceDelta === 0;
+                    const walletInfo = !isGroup ? '' : internalMove
+                        ? `${walletLabel(t.wallet_id)} → ${walletLabel(t.to_wallet_id)}`
+                        : walletLabel(fromInside ? t.wallet_id : t.to_wallet_id);
 
                     const d = new Date(t.transaction_date);
                     const dateStr = d.toLocaleDateString('th-TH', { year: '2-digit', month: 'numeric', day: 'numeric' });
@@ -2837,8 +3230,9 @@
                             <td class="py-2.5 px-2 whitespace-nowrap text-slate-400">${dateStr}</td>
                             <td class="py-2.5 px-2 font-medium whitespace-normal break-words">
                                 <div>${escapeHtml(getTransactionNote(t) || '-')}</div>
+                                ${walletInfo ? `<div class="mt-0.5 text-[10px] font-normal text-slate-400">${escapeHtml(walletInfo)}</div>` : ''}
                             </td>
-                            <td class="py-2.5 px-2 text-right font-semibold ${increasesBalance ? 'text-emerald-600' : 'text-rose-500'}">${balanceDelta > 0 ? '+' : '−'}${formatBaht(amount)}</td>
+                            <td class="py-2.5 px-2 text-right font-semibold ${internalMove ? 'text-slate-400' : increasesBalance ? 'text-emerald-600' : 'text-rose-500'}">${internalMove ? '⇄ ' : balanceDelta > 0 ? '+' : '−'}${formatBaht(amount)}</td>
                             <td class="py-2.5 px-2 text-right font-bold text-slate-700 dark:text-slate-200">${formatBaht(runningBalance)}</td>
                         </tr>
                     `;
@@ -2862,8 +3256,9 @@
                 </section>
                 <div class="mb-3 flex items-center justify-between rounded-2xl bg-brand-50 p-3.5 text-[13px] dark:bg-brand-500/10">
                     <span class="text-slate-600 dark:text-slate-300 font-medium">${isLiability ? 'ยอดหนี้ปัจจุบัน (Outstanding Debt)' : 'ยอดคงเหลือปัจจุบัน (Ending Balance)'}</span>
-                    <span class="num text-lg font-bold text-brand-700 dark:text-brand-200">${formatBaht(Math.abs(Number(acc.balance)))}</span>
+                    <span class="num text-lg font-bold text-brand-700 dark:text-brand-200">${formatBaht(Math.abs(groupBalance))}</span>
                 </div>
+                ${isGroup ? `<p class="-mt-1 mb-3 px-1 text-[11px] muted">รวมรายการจาก ${children.length} กระเป๋าย่อย · รายการ ⇄ คือโอนระหว่างกระเป๋าภายใน ยอดรวมไม่เปลี่ยน</p>` : ''}
                 <div class="overflow-x-auto">
                     <table class="w-full table-fixed text-left border-collapse">
                         <colgroup>
@@ -2885,11 +3280,97 @@
                         </tbody>
                     </table>
                 </div>
+                ${renderBalanceCheck(acc, isGroup ? memberIds : [String(acc.id)], isGroup)}
                 ${renderSummaryNote(accountId)}
             `;
             document.getElementById('ledgerModal').classList.remove('hidden');
             lucide.createIcons();
         }
+        // Transactions that look like the same entry saved twice: same type, amount, accounts and note within 3 minutes.
+        function findSuspectedDuplicates(accountIds) {
+            const related = db.transactions
+                .filter(tx => accountIds.includes(String(tx.wallet_id)) || accountIds.includes(String(tx.to_wallet_id)))
+                .sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
+            const sameEntry = (a, b) => a.transaction_type === b.transaction_type
+                && roundMoney(a.amount) === roundMoney(b.amount)
+                && String(a.wallet_id) === String(b.wallet_id)
+                && String(a.to_wallet_id || '') === String(b.to_wallet_id || '')
+                && String(getTransactionNote(a) || '').trim() === String(getTransactionNote(b) || '').trim();
+            const pairs = [];
+            related.forEach((tx, index) => {
+                for (let next = index + 1; next < related.length; next++) {
+                    const other = related[next];
+                    if (new Date(other.transaction_date) - new Date(tx.transaction_date) > 3 * 60 * 1000) break;
+                    if (sameEntry(tx, other)) pairs.push([tx, other]);
+                }
+            });
+            return pairs;
+        }
+
+        function renderBalanceCheck(acc, accountIds, isGroup) {
+            const duplicates = findSuspectedDuplicates(accountIds);
+            const dateTime = value => new Date(value).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+            return `
+                <section class="mt-3 rounded-2xl bg-slate-50 p-3 dark:bg-white/5">
+                    <div class="mb-2 flex items-center gap-1.5 text-[13px] font-bold text-slate-700 dark:text-slate-200"><i data-lucide="shield-check" class="h-4 w-4 text-brand-500"></i>ตรวจยอด</div>
+                    ${duplicates.length ? `
+                        <div class="mb-3 rounded-xl bg-amber-50 p-2.5 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:ring-amber-500/30">
+                            <div class="text-[12px] font-semibold text-amber-800 dark:text-amber-200">พบรายการที่อาจบันทึกซ้ำ ${duplicates.length} คู่</div>
+                            <div class="mb-1.5 text-[11px] text-amber-700 dark:text-amber-300">ยอด บัญชี และโน้ตเหมือนกัน บันทึกห่างกันไม่เกิน 3 นาที · แตะรายการเพื่อเปิดแล้วลบอันที่ซ้ำ</div>
+                            ${duplicates.map(([first, second]) => `
+                                <div class="mt-1.5 rounded-lg bg-white p-1.5 dark:bg-slate-900">
+                                    <div class="truncate px-1 text-[12px] font-semibold text-slate-700 dark:text-slate-200">${escapeHtml(getTransactionNote(first) || TX_TYPE_LABELS[first.transaction_type] || '-')} · <span class="num">${formatBaht(first.amount)}</span></div>
+                                    <div class="mt-1 grid grid-cols-2 gap-1.5">
+                                        ${[first, second].map((tx, index) => `<button type="button" onclick="closeAccountLedger(); openTransactionModal('${escapeHtml(tx.id)}')" class="rounded-lg bg-slate-100 px-2 py-1.5 text-left text-[11px] text-slate-600 dark:bg-white/10 dark:text-slate-300">อันที่ ${index + 1}<br><span class="muted">${dateTime(tx.transaction_date)}</span></button>`).join('')}
+                                    </div>
+                                </div>`).join('')}
+                        </div>` : `<div class="mb-3 flex items-center gap-1.5 text-[12px] text-emerald-700 dark:text-emerald-300"><i data-lucide="check-circle-2" class="h-3.5 w-3.5"></i>ไม่พบรายการที่น่าจะบันทึกซ้ำ</div>`}
+                    ${isGroup ? `<p class="text-[11px] muted">เทียบยอดกับธนาคารได้ทีละกระเป๋า · เปิดสมุดบัญชีของกระเป๋าย่อยเพื่อตรวจ</p>` : `
+                        <label for="balanceCheckInput" class="mb-1 block text-[12px] font-medium text-slate-600 dark:text-slate-300">${LIABILITY_TYPES.includes(acc.account_type) ? 'ยอดหนี้จริงตามแอปธนาคาร/บัตร' : 'ยอดเงินจริงตามแอปธนาคาร'}</label>
+                        <div class="flex gap-2">
+                            <input id="balanceCheckInput" type="number" step="0.01" inputmode="decimal" placeholder="เช่น ${formatBaht(Math.abs(Number(acc.balance)))}" oninput="previewBalanceCheck('${escapeHtml(acc.id)}')" class="field num min-w-0 flex-1 !py-2">
+                        </div>
+                        <div id="balanceCheckResult" class="mt-2"></div>`}
+                </section>`;
+        }
+
+        function previewBalanceCheck(accountId) {
+            const acc = accountById(accountId);
+            const input = document.getElementById('balanceCheckInput');
+            const result = document.getElementById('balanceCheckResult');
+            if (!acc || !input || !result) return;
+            if (input.value === '') { result.innerHTML = ''; return; }
+            const isLiability = LIABILITY_TYPES.includes(acc.account_type);
+            const shown = isLiability ? Math.abs(Number(acc.balance)) : Number(acc.balance);
+            const diff = roundMoney(Number(input.value) - shown);
+            if (!diff) {
+                result.innerHTML = `<div class="flex items-center gap-1.5 rounded-xl bg-emerald-50 p-2.5 text-[12px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"><i data-lucide="check-circle-2" class="h-4 w-4"></i>ยอดตรงกัน</div>`;
+            } else {
+                result.innerHTML = `
+                    <div class="rounded-xl bg-rose-50 p-2.5 text-[12px] dark:bg-rose-500/10">
+                        <div class="font-semibold text-rose-700 dark:text-rose-300">ยอดไม่ตรง · ในแอป${diff > 0 ? 'น้อยกว่า' : 'มากกว่า'}ของจริง <span class="num">${formatBaht(Math.abs(diff))}</span></div>
+                        <div class="mt-0.5 text-[11px] text-rose-600/80 dark:text-rose-300/80">ถ้ามีรายการซ้ำด้านบน ให้ลบก่อนแล้วตรวจใหม่ · ถ้าไม่มี กดปุ่มด้านล่างเพื่อตั้งยอดให้ตรง</div>
+                        <button type="button" onclick="applyBalanceCheck('${escapeHtml(acc.id)}')" class="btn-primary mt-2 w-full !rounded-xl !py-2 !text-[13px]">ตั้งยอดในแอปเป็น ${formatBaht(Number(input.value))}</button>
+                    </div>`;
+            }
+            lucide.createIcons();
+        }
+
+        async function applyBalanceCheck(accountId) {
+            const input = document.getElementById('balanceCheckInput');
+            const acc = accountById(accountId);
+            if (!acc || !input || input.value === '') return;
+            const entered = Number(input.value);
+            if (!Number.isFinite(entered)) return;
+            if (!confirm(`ตั้งยอด "${acc.account_name}" เป็น ${formatBaht(entered)} ใช่หรือไม่?`)) return;
+            const balance = LIABILITY_TYPES.includes(acc.account_type) ? -Math.abs(entered) : entered;
+            if (!await updateInDB('accounts', acc.id, { balance })) return;
+            await loadAllData(['accounts']);
+            showAlert('ปรับยอดให้ตรงกับธนาคารแล้ว');
+            renderCurrentTab();
+            openAccountLedger(accountId);
+        }
+
         function closeAccountLedger() { document.getElementById('ledgerModal').classList.add('hidden'); }
 
         function renderCategories(container) {
