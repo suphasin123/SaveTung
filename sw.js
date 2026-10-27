@@ -1,6 +1,6 @@
 // SaveTung service worker: keeps the app shell and CDN libraries available offline.
 // Supabase API traffic is never cached, so financial data always comes from the server.
-const CACHE = 'savetung-v7';
+const CACHE = 'savetung-v22';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 const CDN_HOSTS = ['cdn.tailwindcss.com', 'unpkg.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
